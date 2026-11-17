@@ -1,0 +1,5409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Animator</title>
+  <style>
+    :root {
+      --bg-dark: #000000;
+      --bg-panel: #080808;
+      --bg-elevated: #121212;
+      --border: #262626;
+      --text: #f0f0f0;
+      --text-muted: #888888;
+      --accent: #e5e5e5;
+      --accent-hover: #ffffff;
+      --cel-color: #4ade80;
+      --bg-layer-color: #a3a3a3;
+      --mouth-color: #f472b6;
+      --audio-color: #c084fc;
+      --cam-color: #fbbf24;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+
+    *::-webkit-scrollbar {
+      display: none;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      font-size: 12px;
+    }
+
+    /* Top Header */
+    header {
+      height: 42px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .pill-group {
+      display: inline-flex;
+      align-items: center;
+      background: var(--bg-dark);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px;
+      gap: 2px;
+    }
+
+    button, select {
+      background: var(--bg-elevated);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 4px 7px;
+      font-size: 11px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+
+    button:hover, select:hover {
+      background: #1e1e1e;
+      border-color: #3f3f3f;
+    }
+
+    button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #000000;
+      font-weight: 600;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #000000;
+      font-weight: 600;
+    }
+
+    button.primary:hover {
+      background: var(--accent-hover);
+    }
+
+    button.export-btn {
+      background: #f0f0f0;
+      border-color: #f0f0f0;
+      color: #000000;
+      font-weight: 700;
+    }
+
+    button.export-btn:hover {
+      background: #ffffff;
+      border-color: #ffffff;
+    }
+
+    button.danger:hover {
+      background: rgba(239, 68, 68, 0.2);
+      border-color: var(--danger);
+      color: #fca5a5;
+    }
+
+    button.recording {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: #ffffff;
+      font-weight: 700;
+      animation: pulseRec 1s infinite;
+    }
+
+    @keyframes pulseRec {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.65; }
+    }
+
+    .mini-btn {
+      padding: 2px 5px;
+      font-size: 10px;
+      border-radius: 4px;
+    }
+
+    .dropdown-wrap {
+      position: relative;
+      display: inline-flex;
+    }
+
+    .dropdown-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      background: var(--bg-elevated);
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 4px;
+      min-width: 195px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.85);
+      z-index: 120;
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .dropdown-menu.open {
+      display: flex;
+    }
+
+    .dropdown-menu button {
+      width: 100%;
+      justify-content: flex-start;
+      background: transparent;
+      border: none;
+      padding: 7px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+    }
+
+    .dropdown-menu button:hover {
+      background: var(--accent);
+      color: #000000;
+    }
+
+    /* Page Switch Views */
+    .editor-view {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .editor-view.hidden-view,
+    .scenes-view.hidden-view {
+      display: none;
+    }
+
+    /* Camera Popover Anchored Above Timeline Header */
+    .cam-popover {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 0;
+      width: 215px;
+      background: var(--bg-panel);
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85);
+      z-index: 110;
+      display: none;
+      flex-direction: column;
+      gap: 9px;
+    }
+
+    .cam-popover.open {
+      display: flex;
+    }
+
+    /* Main Workspace */
+    .workspace {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* Ultra-Slim Left Tool Dock (2-wide palette) */
+    .left-dock {
+      width: 54px;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border);
+      padding: 6px 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .section-title {
+      font-size: 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+      text-align: center;
+    }
+
+    .tool-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .tool-btn {
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 5px 1px;
+      font-weight: 500;
+      font-size: 8.5px;
+      gap: 2px;
+      width: 100%;
+    }
+
+    .tool-btn svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .brush-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    input[type="color"] {
+      width: 100%;
+      height: 18px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: none;
+      padding: 0;
+      cursor: pointer;
+    }
+
+    .swatches {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 3px;
+      width: 100%;
+    }
+
+    .swatch {
+      width: 100%;
+      aspect-ratio: 1;
+      border-radius: 3px;
+      border: 1px solid rgba(255,255,255,0.22);
+      cursor: pointer;
+    }
+
+    .size-box {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .gap-btn {
+      width: 100%;
+      justify-content: center;
+      padding: 3px 1px;
+      font-size: 8.5px;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      min-width: 0;
+      accent-color: #d4d4d4;
+      cursor: pointer;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 5px;
+    }
+
+    .control-row label {
+      color: var(--text-muted);
+      font-size: 11px;
+      min-width: 42px;
+    }
+
+    .val-badge {
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      font-size: 11px;
+      min-width: 34px;
+      text-align: right;
+    }
+
+    /* Full-Area Stage */
+    .stage-container {
+      flex: 1;
+      background: #000000;
+      position: relative;
+      overflow: hidden;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .stage-container.drop-active {
+      outline: 2px dashed var(--cel-color);
+      outline-offset: -4px;
+    }
+
+    canvas#stage {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      cursor: crosshair;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: -webkit-crisp-edges;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    .stage-top-left {
+      position: absolute;
+      top: 10px;
+      left: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      z-index: 6;
+    }
+
+    .stage-badge {
+      background: rgba(8, 8, 8, 0.9);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+
+    /* Floating Mouth Viseme Switcher Widget (Frame + Left/Right Arrows) */
+    .mouth-widget {
+      position: absolute;
+      bottom: 12px;
+      right: 12px;
+      background: rgba(10, 10, 10, 0.94);
+      border: 1px solid #3a3a3a;
+      border-radius: 10px;
+      padding: 7px 8px;
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 8;
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.85);
+    }
+
+    .mouth-widget.open {
+      display: flex;
+    }
+
+    .mouth-cycler {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mouth-arrow-btn {
+      width: 26px;
+      height: 54px;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 0;
+      background: #141414;
+    }
+
+    .mouth-frame-box {
+      width: 84px;
+      height: 62px;
+      background: #ffffff;
+      border: 2px solid var(--mouth-color);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    .mouth-frame-box canvas {
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    .mouth-frame-label {
+      position: absolute;
+      bottom: 2px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.82);
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 999px;
+      pointer-events: none;
+    }
+
+    .mouth-widget-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+    }
+
+    /* Mouth Viseme Sheet Popover (All 8 shapes + Clear/Reset) */
+    .mouth-sheet-pop {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      right: 0;
+      width: 274px;
+      background: var(--bg-panel);
+      border: 1px solid #3a3a3a;
+      border-radius: 10px;
+      padding: 9px;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.9);
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 20;
+    }
+
+    .mouth-sheet-pop.open {
+      display: flex;
+    }
+
+    .mouth-sheet-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+    }
+
+    .mouth-slot {
+      background: #ffffff;
+      border: 2px solid #262626;
+      border-radius: 5px;
+      aspect-ratio: 4 / 3;
+      position: relative;
+      cursor: pointer;
+      overflow: hidden;
+      padding: 0;
+    }
+
+    .mouth-slot.active {
+      border-color: var(--mouth-color);
+      box-shadow: 0 0 0 1px var(--mouth-color);
+    }
+
+    .mouth-slot canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    .mouth-slot span {
+      position: absolute;
+      bottom: 1px;
+      left: 2px;
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      font-size: 8.5px;
+      font-weight: 700;
+      padding: 0 3px;
+      border-radius: 2px;
+    }
+
+    /* Bottom Timeline */
+    .timeline-panel {
+      height: 144px;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow: visible;
+    }
+
+    .timeline-header {
+      height: 36px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      gap: 6px;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .timeline-header-center {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .timeline-body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .track-labels {
+      width: 212px;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      background: var(--bg-panel);
+    }
+
+    .track-label-loop {
+      height: 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .track-label-spacer {
+      height: 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .track-label {
+      flex: 1;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px;
+      font-size: 11px;
+      font-weight: 500;
+      gap: 4px;
+      border-left: 3px solid transparent;
+    }
+
+    .track-label.active-draw-layer {
+      border-left-color: #ffffff;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .track-label.hidden-track {
+      display: none;
+    }
+
+    .track-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    .track-tag i {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+
+    .timeline-scroll {
+      flex: 1;
+      overflow-x: auto;
+      overflow-y: hidden;
+      position: relative;
+      background: #050505;
+      min-width: 0;
+    }
+
+    .timeline-grid {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      touch-action: none;
+    }
+
+    /* Loop Range Row */
+    .loop-row {
+      height: 18px;
+      width: 100%;
+      border-bottom: 1px solid var(--border);
+      background: #000000;
+      position: relative;
+      cursor: crosshair;
+      flex-shrink: 0;
+    }
+
+    .loop-selection-bar {
+      position: absolute;
+      top: 2px;
+      bottom: 2px;
+      background: rgba(255, 255, 255, 0.25);
+      border-left: 2px solid #ffffff;
+      border-right: 2px solid #ffffff;
+      border-radius: 2px;
+      pointer-events: none;
+      display: none;
+    }
+
+    .loop-highlight-overlay {
+      position: absolute;
+      top: 18px;
+      bottom: 0;
+      background: rgba(255, 255, 255, 0.05);
+      border-left: 1px dashed rgba(255, 255, 255, 0.45);
+      border-right: 1px dashed rgba(255, 255, 255, 0.45);
+      pointer-events: none;
+      z-index: 2;
+      display: none;
+    }
+
+    /* Ruler Row */
+    .ruler-row {
+      height: 24px;
+      display: flex;
+      width: 100%;
+      border-bottom: 1px solid var(--border);
+      background: #0f0f0f;
+      flex-shrink: 0;
+      cursor: ew-resize;
+    }
+
+    .ruler-cell {
+      flex: 1 1 0;
+      min-width: 0;
+      border-right: 1px solid rgba(255,255,255,0.06);
+      font-size: 10px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .ruler-cell.active {
+      background: #e5e5e5;
+      color: #000000;
+      font-weight: 700;
+    }
+
+    .track-row {
+      flex: 1;
+      display: flex;
+      width: 100%;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .track-row.hidden-track {
+      display: none;
+    }
+
+    #celTrackRow {
+      cursor: pointer;
+    }
+
+    .frame-cell {
+      flex: 1 1 0;
+      min-width: 0;
+      border-right: 1px solid rgba(255,255,255,0.05);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .frame-cell.current-col {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    /* Cel Span Pill Overlay */
+    .cel-span-bar {
+      position: absolute;
+      top: 5px;
+      bottom: 5px;
+      background: rgba(74, 222, 128, 0.18);
+      border: 1px solid rgba(74, 222, 128, 0.7);
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 5px;
+      z-index: 1;
+      cursor: ew-resize;
+      overflow: hidden;
+    }
+
+    .cel-span-bar:hover {
+      background: rgba(74, 222, 128, 0.3);
+      border-color: var(--cel-color);
+    }
+
+    .cel-span-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--cel-color);
+      flex-shrink: 0;
+    }
+
+    .cel-span-dot.blank {
+      background: transparent;
+      border: 2px solid var(--cel-color);
+    }
+
+    .cel-span-grip {
+      width: 3px;
+      height: 12px;
+      border-radius: 2px;
+      background: rgba(74, 222, 128, 0.85);
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+
+    /* Mouth Viseme Keyframe Markers */
+    #mouthTrackRow {
+      background: #0a080a;
+      cursor: pointer;
+    }
+
+    .mouth-key-pill {
+      position: absolute;
+      top: 5px;
+      bottom: 5px;
+      background: rgba(244, 114, 182, 0.2);
+      border: 1px solid var(--mouth-color);
+      border-radius: 4px;
+      color: #fbcfe8;
+      font-size: 9px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 4px;
+      z-index: 1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    /* Background Layer Track */
+    #bgTrackRow {
+      background: #0a0a0a;
+      cursor: pointer;
+    }
+
+    #bgTrackRow.drop-active {
+      background: rgba(255, 255, 255, 0.12);
+      outline: 2px dashed #d4d4d4;
+      outline-offset: -2px;
+    }
+
+    .bg-span-bar {
+      position: absolute;
+      inset: 5px 4px;
+      background: rgba(163, 163, 163, 0.14);
+      border: 1px solid rgba(163, 163, 163, 0.5);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      font-size: 11px;
+      color: #d4d4d4;
+      pointer-events: none;
+    }
+
+    /* Audio Track & Waveform */
+    #audioTrackRow {
+      background: #080808;
+      position: relative;
+    }
+
+    #audioTrackRow.drop-active {
+      background: rgba(192, 132, 252, 0.15);
+      outline: 2px dashed var(--audio-color);
+      outline-offset: -2px;
+    }
+
+    .audio-empty-hint {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+
+    .audio-rec-badge {
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(239, 68, 68, 0.9);
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 999px;
+      z-index: 3;
+      pointer-events: none;
+      display: none;
+    }
+
+    #audioWaveCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .audio-clip-box {
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      background: rgba(192, 132, 252, 0.14);
+      border: 1px solid rgba(192, 132, 252, 0.75);
+      border-radius: 4px;
+      z-index: 2;
+      cursor: grab;
+      display: none;
+    }
+
+    .audio-clip-box.selected {
+      border-color: #ffffff;
+      box-shadow: 0 0 0 1px #ffffff;
+    }
+
+    .audio-clip-box:active {
+      cursor: grabbing;
+    }
+
+    .audio-clip-label {
+      position: absolute;
+      top: 2px;
+      left: 12px;
+      right: 12px;
+      font-size: 10px;
+      color: #e9d5ff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+    }
+
+    .audio-trim-handle {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 10px;
+      background: rgba(192, 132, 252, 0.45);
+      cursor: ew-resize;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .audio-trim-handle::after {
+      content: "";
+      width: 2px;
+      height: 12px;
+      background: #f3e8ff;
+      border-radius: 1px;
+    }
+
+    .audio-trim-handle.left {
+      left: 0;
+      border-radius: 3px 0 0 3px;
+    }
+
+    .audio-trim-handle.right {
+      right: 0;
+      border-radius: 0 3px 3px 0;
+    }
+
+    .audio-trim-handle:hover {
+      background: rgba(192, 132, 252, 0.85);
+    }
+
+    /* Camera Keyframe Markers */
+    .cam-bar {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 5px;
+      background: rgba(251, 191, 36, 0.35);
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .cam-diamond {
+      width: 10px;
+      height: 10px;
+      background: var(--cam-color);
+      transform: rotate(45deg);
+      z-index: 1;
+      box-shadow: 0 0 0 2px #050505;
+    }
+
+    .playhead-line {
+      position: absolute;
+      top: 18px;
+      bottom: 0;
+      width: 2px;
+      margin-left: -1px;
+      background: #ffffff;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .playhead-cap {
+      position: absolute;
+      top: 0;
+      left: -5px;
+      width: 12px;
+      height: 6px;
+      background: #ffffff;
+      border-radius: 0 0 3px 3px;
+    }
+
+    /* ==========================================
+       SCENES / STORYBOARD PAGE
+       ========================================== */
+    .scenes-view {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #000000;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .scenes-player-area {
+      height: 44%;
+      min-height: 180px;
+      background: #050505;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 14px 8px;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .scenes-preview-wrap {
+      flex: 1;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 0;
+    }
+
+    canvas#scenesPreviewCanvas {
+      max-width: 100%;
+      max-height: 100%;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    .scenes-player-bar {
+      width: 100%;
+      max-width: 820px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .scenes-scrubber {
+      flex: 1;
+      height: 16px;
+      background: #121212;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      position: relative;
+      cursor: ew-resize;
+      overflow: hidden;
+      display: flex;
+    }
+
+    .scenes-scrub-seg {
+      height: 100%;
+      border-right: 1px solid #333333;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .scenes-scrub-playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #ffffff;
+      pointer-events: none;
+    }
+
+    .scenes-board-header {
+      height: 38px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      flex-shrink: 0;
+    }
+
+    .scenes-board {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px;
+      background: #000000;
+      --scene-card-w: 220px;
+    }
+
+    .scenes-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .scene-card {
+      width: var(--scene-card-w);
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      cursor: grab;
+      transition: border-color 0.12s, transform 0.12s, opacity 0.12s;
+    }
+
+    .scene-card:active {
+      cursor: grabbing;
+    }
+
+    .scene-card.selected {
+      border-color: #ffffff;
+      box-shadow: 0 0 0 1px #ffffff;
+    }
+
+    .scene-card.playing-now {
+      border-color: var(--cel-color);
+      box-shadow: 0 0 0 1px var(--cel-color);
+    }
+
+    .scene-card.drag-over {
+      border-color: #ffffff;
+      outline: 2px dashed #ffffff;
+      transform: scale(1.02);
+    }
+
+    .scene-card.dragging {
+      opacity: 0.4;
+    }
+
+    .scene-thumb-box {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #0d0d0d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+    }
+
+    .scene-thumb-box canvas {
+      max-width: 100%;
+      max-height: 100%;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    .scene-num-badge {
+      position: absolute;
+      top: 5px;
+      left: 6px;
+      background: rgba(0, 0, 0, 0.8);
+      border: 1px solid #333333;
+      color: #f0f0f0;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      pointer-events: none;
+    }
+
+    .scene-meta {
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .scene-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+    }
+
+    .scene-name-input {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 4px;
+      border-radius: 4px;
+      width: 100%;
+      min-width: 0;
+      user-select: text;
+    }
+
+    .scene-name-input:focus {
+      outline: none;
+      background: #141414;
+      border-color: #444444;
+    }
+
+    .scene-actions-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+    }
+
+    .scene-info-txt {
+      font-size: 10px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* Context Pop-out Menus */
+    .context-menu {
+      position: fixed;
+      background: var(--bg-elevated);
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 4px;
+      min-width: 165px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.85);
+      z-index: 130;
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .context-menu button {
+      width: 100%;
+      justify-content: flex-start;
+      background: transparent;
+      border: none;
+      padding: 6px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+    }
+
+    .context-menu button:hover:not(:disabled) {
+      background: var(--accent);
+      color: #000000;
+    }
+
+    .context-menu button.ctx-danger:hover:not(:disabled) {
+      background: var(--danger);
+      color: #fff;
+    }
+
+    .context-menu button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .hint {
+      font-size: 10.5px;
+      color: var(--text-muted);
+      line-height: 1.35;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="toolbar-group">
+      <div class="pill-group">
+        <button id="btnModeEditor" class="active" style="border:none;">Editor</button>
+        <button id="btnModeScenes" style="border:none;">Scenes</button>
+      </div>
+      <span id="activeSceneLabel" style="color:var(--text-muted); font-size:11px; margin-left:4px;">Scene 1</span>
+    </div>
+
+    <div class="toolbar-group" id="editorOnionGroup">
+      <div class="pill-group" title="Onion Skinning (O)">
+        <button id="btnOnion" style="border:none;">Onion: Off</button>
+        <button id="btnOnionBefore" class="mini-btn active" style="border:none;" title="Show 1 Frame Before">Prev</button>
+        <button id="btnOnionAfter" class="mini-btn" style="border:none;" title="Show 1 Frame After">Next</button>
+      </div>
+    </div>
+
+    <div class="toolbar-group">
+      <button id="btnLoadJson" title="Open project JSON">Load</button>
+      <input type="file" id="fileInput" accept=".json" style="display:none" />
+
+      <div class="dropdown-wrap" id="sizeWrap">
+        <button id="btnCanvasSize" title="Change Canvas Resolution">📐 1280×720 ▾</button>
+        <div class="dropdown-menu" id="sizeMenu">
+          <button data-res="720x480">720 × 480 (SD)</button>
+          <button data-res="1280x720">1280 × 720 (HD)</button>
+          <button data-res="1920x1080">1920 × 1080 (Full HD)</button>
+        </div>
+      </div>
+
+      <div class="dropdown-wrap" id="exportWrap">
+        <button id="btnExportMenu" class="export-btn" title="Export Video, PNG Sequence, or Project">Export ▾</button>
+        <div class="dropdown-menu" id="exportMenu">
+          <button id="btnExportMp4">🎞 Export MP4 (.mp4)</button>
+          <button id="btnExportWebm">🎬 Export WebM (.webm)</button>
+          <button id="btnExportPngSeq">🖼 Export PNG Sequence (.zip)</button>
+          <button id="btnSaveJson">💾 Export Project (.json)</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==========================================
+       PAGE 1: SCENE EDITOR VIEW
+       ========================================== -->
+  <div class="editor-view" id="editorView">
+    <div class="workspace">
+      <!-- Slim Left Tool Dock (2-wide palette) -->
+      <aside class="left-dock">
+        <div>
+          <div class="section-title">Tools</div>
+          <div class="tool-stack">
+            <button class="tool-btn active" data-tool="brush" title="Brush (B) — Right-click erases, [ / ] resizes">
+              <svg viewBox="0 0 24 24">
+                <path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3Z"/>
+                <path d="M9 8c-2 3-4 3.5-7 4l8 10c2-1 6-5 6-7"/>
+              </svg>
+              <span>Brush</span>
+            </button>
+
+            <button class="tool-btn" data-tool="eraser" title="Eraser (E) — [ / ] resizes">
+              <svg viewBox="0 0 24 24">
+                <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/>
+                <path d="M22 21H7"/>
+                <path d="m5 11 9 9"/>
+              </svg>
+              <span>Eraser</span>
+            </button>
+
+            <button class="tool-btn" data-tool="fill" title="Fill Bucket (F) — Right-click erases">
+              <svg viewBox="0 0 24 24">
+                <path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z"/>
+                <path d="m5 2 5 5"/>
+                <path d="M2 13h15"/>
+                <path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z"/>
+              </svg>
+              <span>Fill</span>
+            </button>
+
+            <button class="tool-btn" data-tool="moveCam" title="Move Layer (Left-drag) / Zoom Cam (Right-drag) / Pan Cam (Shift+drag)">
+              <svg viewBox="0 0 24 24">
+                <path d="M5 9l-3 3 3 3"/>
+                <path d="M9 5l3-3 3 3"/>
+                <path d="M15 19l-3 3-3-3"/>
+                <path d="M19 9l3 3-3 3"/>
+                <path d="M2 12h20"/>
+                <path d="M12 2v20"/>
+              </svg>
+              <span>Move</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="brush-box">
+          <div class="section-title" style="margin-bottom:0;">Color</div>
+          <input type="color" id="brushColor" value="#000000" />
+          <div class="swatches">
+            <div class="swatch" style="background:#000000" data-color="#000000"></div>
+            <div class="swatch" style="background:#ef4444" data-color="#ef4444"></div>
+            <div class="swatch" style="background:#3b82f6" data-color="#3b82f6"></div>
+            <div class="swatch" style="background:#22c55e" data-color="#22c55e"></div>
+            <div class="swatch" style="background:#f59e0b" data-color="#f59e0b"></div>
+            <div class="swatch" style="background:#a855f7" data-color="#a855f7"></div>
+            <div class="swatch" style="background:#ec4899" data-color="#ec4899"></div>
+            <div class="swatch" style="background:#ffffff" data-color="#ffffff"></div>
+          </div>
+        </div>
+
+        <div class="size-box">
+          <div class="section-title" style="margin-bottom:0;"><span id="brushSizeVal">4px</span></div>
+          <input type="range" id="brushSize" min="1" max="32" value="4" title="Brush/Eraser Size ([ and ])" />
+        </div>
+
+        <div class="size-box">
+          <div class="section-title" style="margin-bottom:0;">Close</div>
+          <button id="btnGapCycle" class="gap-btn" title="Automatically close gaps up to this size when using Fill">Off</button>
+        </div>
+      </aside>
+
+      <!-- Full-Area Center Stage -->
+      <main class="stage-container" id="stageContainer">
+        <div class="stage-top-left">
+          <div class="stage-badge" id="stageBadge">BRUSH (4px) | F1 | 1280×720 | View 100%</div>
+          <button id="btnResetView" class="mini-btn" style="display:none;" title="Reset Canvas Zoom & Pan">Reset View</button>
+        </div>
+
+        <!-- Framed Viseme Switcher Widget (Appears when Mouth Layer is On) -->
+        <div class="mouth-widget" id="mouthWidget">
+          <div class="mouth-sheet-pop" id="mouthSheetPop">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <strong style="font-size:11px;">Viseme Shapes</strong>
+              <div style="display:flex; gap:4px;">
+                <button id="btnMouthClearShape" class="mini-btn danger" title="Clear current mouth shape to redraw">Clear</button>
+                <button id="btnMouthResetShape" class="mini-btn" title="Restore starter shape">Reset</button>
+                <button id="btnMouthClosePop" class="mini-btn">✕</button>
+              </div>
+            </div>
+            <div class="mouth-sheet-grid" id="mouthSheetGrid"></div>
+            <div class="hint">Click a shape to select it, then use <strong>Draw Shape</strong> (or draw directly on stage) to customize!</div>
+          </div>
+
+          <div class="mouth-cycler">
+            <button id="btnMouthPrev" class="mouth-arrow-btn" title="Previous Mouth Viseme">◀</button>
+            <div class="mouth-frame-box" id="mouthFrameBox" title="Click to view/pick all mouth visemes">
+              <canvas id="mouthPreviewCanvas" width="160" height="120"></canvas>
+              <span class="mouth-frame-label" id="mouthFrameLabel">Rest</span>
+            </div>
+            <button id="btnMouthNext" class="mouth-arrow-btn" title="Next Mouth Viseme">▶</button>
+          </div>
+          <div class="mouth-widget-actions">
+            <button id="btnMouthDraw" class="mini-btn" style="flex:1; justify-content:center;" title="Draw replacement directly on stage">Draw</button>
+            <button id="btnMouthMove" class="mini-btn" style="flex:1; justify-content:center;" title="Drag mouth position on stage">Move</button>
+            <button id="btnMouthAll" class="mini-btn" title="All Viseme Shapes">Shapes</button>
+          </div>
+        </div>
+
+        <canvas id="stage"></canvas>
+      </main>
+    </div>
+
+    <!-- Bottom Timeline -->
+    <section class="timeline-panel" id="timelinePanel">
+      <div class="timeline-header">
+        <!-- Left: Timeline & Track Toggles + Camera Popover -->
+        <div class="toolbar-group">
+          <button id="btnAddFrame" title="Extend timeline by 1 frame">+ Frame</button>
+          <button id="btnToggleMouthTrack" title="Show/Hide Mouth Shapes Viseme Layer">Mouth: Off</button>
+          <button id="btnToggleBgTrack" title="Show/Hide Background Layer">BG: Off</button>
+          <button id="btnToggleAudioTrack" title="Show/Hide Audio Track">Audio: Off</button>
+          <button id="btnToggleCamTrack" title="Show/Hide Camera Keyframes on Timeline">CamTrack: Off</button>
+
+          <div class="dropdown-wrap" id="camPopWrap">
+            <button id="btnToggleCamPanel" title="Pop out Camera Controls">📷 Camera</button>
+            <div class="cam-popover" id="camPopover">
+              <div style="display:flex; align-items:center; justify-content:space-between;">
+                <span class="section-title" style="margin:0; text-align:left; font-size:10px;">Camera Keyframes</span>
+                <button id="btnCloseCamPanel" class="mini-btn" title="Hide Camera Menu">✕</button>
+              </div>
+
+              <div>
+                <div style="display:flex; gap:5px; margin-bottom:6px;">
+                  <button id="btnSetCamKey" class="primary" style="flex:1;">◆ Keyframe</button>
+                  <button id="btnDelCamKey" class="danger" title="Remove Camera Keyframe">Remove</button>
+                </div>
+                <div class="control-row">
+                  <label>Easing</label>
+                  <select id="camEase" style="flex:1;">
+                    <option value="easeInOut">Ease In-Out</option>
+                    <option value="linear">Linear</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <div class="control-row">
+                  <label>Scale</label>
+                  <input type="range" id="camScale" min="20" max="500" value="100" />
+                  <span class="val-badge" id="camScaleVal">100%</span>
+                </div>
+                <div class="control-row">
+                  <label>Pan X</label>
+                  <input type="range" id="camX" min="-1200" max="1200" value="0" />
+                  <span class="val-badge" id="camXVal">0</span>
+                </div>
+                <div class="control-row">
+                  <label>Pan Y</label>
+                  <input type="range" id="camY" min="-800" max="800" value="0" />
+                  <span class="val-badge" id="camYVal">0</span>
+                </div>
+                <button id="btnResetCam" style="width:100%; justify-content:center; margin-top:2px;">Reset Camera (100%)</button>
+              </div>
+
+              <div class="hint">
+                <strong>View Zoom:</strong> Scroll wheel<br>
+                <strong>View Pan:</strong> Middle-mouse drag<br>
+                <strong>Cam Zoom:</strong> Right-drag (Move)<br>
+                <strong>Cam Pan:</strong> Shift+drag (Move)
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center: Playback Controls -->
+        <div class="timeline-header-center">
+          <button id="btnRewind" title="First Frame">|&lt;</button>
+          <button id="btnPrevFrame" title="Previous Frame (&lt;)">&lt;</button>
+          <button id="btnPlay" class="primary" title="Play / Pause (Space)">▶ Play</button>
+          <button id="btnNextFrame" title="Next Frame (&gt; — extends at end)">&gt;</button>
+          <button id="btnLoop" class="active" title="Toggle Loop">Loop: On</button>
+          <select id="fpsSelect" title="Frames Per Second">
+            <option value="12" selected>12 FPS</option>
+            <option value="24">24 FPS</option>
+          </select>
+          <span id="frameIndicator" style="min-width: 58px; text-align:center; color: var(--text-muted); font-variant-numeric: tabular-nums;">
+            F 1 / 24
+          </span>
+        </div>
+
+        <!-- Right: Loop & Timeline Zoom Badges -->
+        <div class="toolbar-group">
+          <span id="loopRangeBadge" style="color:var(--text); font-size:11px;">Loop: All</span>
+          <button id="btnResetTimelineZoom" class="mini-btn" style="display:none;" title="Reset Timeline Zoom">Zoom: 1x ✕</button>
+        </div>
+      </div>
+
+      <div class="timeline-body">
+        <div class="track-labels">
+          <div class="track-label-loop">
+            <span>Loop Range</span>
+            <button id="btnClearLoopRange" class="mini-btn" title="Reset Loop Range">Clear</button>
+          </div>
+          <div class="track-label-spacer">Scrub Frames</div>
+          <div class="track-label hidden-track" id="mouthTrackLabel">
+            <span class="track-tag" title="Click to draw/move Mouth Shapes"><i style="background:var(--mouth-color)"></i> Mouth</span>
+            <div style="display:flex; gap:3px;">
+              <button id="btnVisMouth" class="mini-btn" title="Toggle Mouth Visibility">👁</button>
+            </div>
+          </div>
+          <div class="track-label active-draw-layer" id="celTrackLabel">
+            <span class="track-tag" title="Click to draw on Animation Frames"><i style="background:var(--cel-color)"></i> Frame-by-Frame</span>
+            <button id="btnVisCel" class="mini-btn" title="Toggle Cel Layer">👁</button>
+          </div>
+          <div class="track-label hidden-track" id="bgTrackLabel">
+            <span class="track-tag" title="Click to draw on Background Layer"><i style="background:var(--bg-layer-color)"></i> Background</span>
+            <div style="display:flex; gap:3px;">
+              <button id="btnAddBgImg" class="mini-btn" title="Load Background Image">+</button>
+              <button id="btnVisBg" class="mini-btn" title="Toggle Background Visibility">👁</button>
+              <button id="btnClearBg" class="mini-btn danger" title="Clear Background">✕</button>
+            </div>
+            <input type="file" id="bgFileInput" accept="image/*" style="display:none" />
+          </div>
+          <div class="track-label hidden-track" id="audioTrackLabel">
+            <span class="track-tag"><i style="background:var(--audio-color)"></i> Audio</span>
+            <div style="display:flex; gap:3px;">
+              <button id="btnRecAudio" class="mini-btn" title="Record Audio from Microphone">● Rec</button>
+              <button id="btnAddAudio" class="mini-btn" title="Import Audio File">+</button>
+              <button id="btnFitAudio" class="mini-btn" title="Fit Timeline Frames to Audio" style="display:none;">Fit</button>
+              <button id="btnMuteAudio" class="mini-btn" title="Mute/Unmute Audio">🔊</button>
+              <button id="btnClearAudio" class="mini-btn danger" title="Remove Audio" style="display:none;">✕</button>
+            </div>
+            <input type="file" id="audioFileInput" accept="audio/*" style="display:none" />
+          </div>
+          <div class="track-label hidden-track" id="camTrackLabel">
+            <span class="track-tag"><i style="background:var(--cam-color)"></i> Camera</span>
+            <button id="btnVisCam" class="mini-btn" title="Toggle Camera Preview">👁</button>
+          </div>
+        </div>
+
+        <div class="timeline-scroll" id="timelineScroll">
+          <div class="timeline-grid" id="timelineGrid">
+            <div class="loop-row" id="loopRow" title="Drag to select loop range (double-click to clear)">
+              <div class="loop-selection-bar" id="loopSelectionBar"></div>
+            </div>
+            <div class="ruler-row" id="rulerRow"></div>
+            <div class="track-row hidden-track" id="mouthTrackRow"></div>
+            <div class="track-row" id="celTrackRow"></div>
+            <div class="track-row hidden-track" id="bgTrackRow">
+              <div class="bg-span-bar" id="bgSpanBar">Background Layer (Drop image here or click to draw)</div>
+            </div>
+            <div class="track-row hidden-track" id="audioTrackRow">
+              <div class="audio-empty-hint" id="audioEmptyHint">Drag &amp; drop audio, click +, or ● Rec from mic</div>
+              <div class="audio-rec-badge" id="audioRecBadge">● REC 0.0s</div>
+              <canvas id="audioWaveCanvas"></canvas>
+              <div class="audio-clip-box" id="audioClipBox">
+                <div class="audio-trim-handle left" data-trim="left" title="Trim Start (Snaps to Frame)"></div>
+                <div class="audio-clip-label" id="audioClipLabel"></div>
+                <div class="audio-trim-handle right" data-trim="right" title="Trim End (Snaps to Frame)"></div>
+              </div>
+            </div>
+            <div class="track-row hidden-track" id="camTrackRow"></div>
+            <div class="loop-highlight-overlay" id="loopHighlightOverlay"></div>
+            <div class="playhead-line" id="playheadLine"><div class="playhead-cap"></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ==========================================
+       PAGE 2: SCENES / STORYBOARD VIEW
+       ========================================== -->
+  <div class="scenes-view hidden-view" id="scenesView">
+    <div class="scenes-player-area">
+      <div class="scenes-preview-wrap">
+        <canvas id="scenesPreviewCanvas"></canvas>
+      </div>
+      <div class="scenes-player-bar">
+        <button id="btnScenesRewind" title="Rewind All">|&lt;</button>
+        <button id="btnScenesPlay" class="primary" title="Play All Scenes (Space)">▶ Play All</button>
+        <button id="btnScenesLoop" class="active">Loop: On</button>
+        <div class="scenes-scrubber" id="scenesScrubber" title="Scrub across all scenes"></div>
+        <span id="scenesFrameReadout" style="min-width:130px; text-align:right; color:var(--text-muted); font-variant-numeric:tabular-nums;">
+          Scene 1 • F 1 / 24
+        </span>
+      </div>
+    </div>
+
+    <div class="scenes-board-header">
+      <div class="toolbar-group">
+        <strong style="font-size:12px;">Scenes Storyboard</strong>
+        <button id="btnNewScene" class="primary">+ New Scene</button>
+        <span style="color:var(--text-muted); font-size:11px; margin-left:6px;">Drag scenes to reorder • Double-click a scene to edit</span>
+      </div>
+      <div class="toolbar-group">
+        <span style="color:var(--text-muted); font-size:11px;">Zoom</span>
+        <input type="range" id="scenesZoomSlider" min="90" max="380" value="220" style="width:110px;" />
+      </div>
+    </div>
+
+    <div class="scenes-board" id="scenesBoard">
+      <div class="scenes-grid" id="scenesGrid"></div>
+    </div>
+  </div>
+
+  <!-- Right-Click Frame Context Menu -->
+  <div class="context-menu" id="celContextMenu">
+    <button id="ctxDelete" class="ctx-danger">🗑 Delete Frame</button>
+    <button id="ctxBlank">+ Blank Keyframe</button>
+    <button id="ctxDup">⧉ Duplicate Previous</button>
+    <button id="ctxClear">⌫ Clear Drawing</button>
+  </div>
+
+  <!-- Right-Click Audio Context Menu -->
+  <div class="context-menu" id="audioContextMenu">
+    <button id="ctxAudioDelete" class="ctx-danger">🗑 Delete Audio</button>
+    <button id="ctxAudioMute">🔊 Mute / Unmute</button>
+    <button id="ctxAudioFit">↔ Fit Timeline to Audio</button>
+  </div>
+
+  <script>
+    (() => {
+      let WORLD_W = 1280;
+      let WORLD_H = 720;
+      const MOUTH_W = 160;
+      const MOUTH_H = 120;
+      const VISEME_NAMES = ['Rest', 'MBP', 'AI', 'E', 'O', 'U', 'FV', 'L'];
+
+      function createCelCanvas(w = WORLD_W, h = WORLD_H) {
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        const cctx = c.getContext('2d');
+        cctx.imageSmoothingEnabled = false;
+        return c;
+      }
+
+      // Starter Pixel-Art Mouth Viseme Drawings
+      function drawStarterViseme(canvas, idx) {
+        const c = canvas.getContext('2d');
+        c.imageSmoothingEnabled = false;
+        c.clearRect(0, 0, MOUTH_W, MOUTH_H);
+        const cx = MOUTH_W / 2;
+        const cy = MOUTH_H / 2;
+
+        // Crisp hard-edge ellipse helper
+        const fillOval = (ox, oy, rx, ry, col) => {
+          c.fillStyle = col;
+          for (let y = -ry; y <= ry; y++) {
+            for (let x = -rx; x <= rx; x++) {
+              if ((x * x) / (rx * rx) + (y * y) / (ry * ry) <= 1) {
+                c.fillRect(Math.round(ox + x), Math.round(oy + y), 1, 1);
+              }
+            }
+          }
+        };
+
+        const name = VISEME_NAMES[idx];
+        if (name === 'Rest') {
+          c.fillStyle = '#000000';
+          c.fillRect(cx - 28, cy - 2, 56, 4);
+          c.fillRect(cx - 32, cy - 4, 5, 3);
+          c.fillRect(cx + 27, cy - 4, 5, 3);
+        } else if (name === 'MBP') {
+          c.fillStyle = '#000000';
+          c.fillRect(cx - 30, cy - 3, 60, 6);
+          c.fillRect(cx - 34, cy - 5, 4, 10);
+          c.fillRect(cx + 30, cy - 5, 4, 10);
+        } else if (name === 'AI') {
+          fillOval(cx, cy, 34, 28, '#000000');
+          fillOval(cx, cy + 2, 28, 22, '#450a0a');
+          // Top teeth
+          c.fillStyle = '#ffffff';
+          c.fillRect(cx - 20, cy - 20, 40, 8);
+          // Tongue
+          fillOval(cx, cy + 16, 18, 8, '#f43f5e');
+        } else if (name === 'E') {
+          fillOval(cx, cy, 38, 17, '#000000');
+          fillOval(cx, cy, 32, 12, '#ffffff');
+          c.fillStyle = '#000000';
+          c.fillRect(cx - 30, cy - 1, 60, 2);
+        } else if (name === 'O') {
+          fillOval(cx, cy, 24, 28, '#000000');
+          fillOval(cx, cy + 2, 18, 22, '#450a0a');
+          fillOval(cx, cy + 16, 11, 6, '#f43f5e');
+        } else if (name === 'U') {
+          fillOval(cx, cy, 15, 16, '#000000');
+          fillOval(cx, cy, 9, 10, '#450a0a');
+        } else if (name === 'FV') {
+          fillOval(cx, cy, 32, 14, '#000000');
+          c.fillStyle = '#ffffff';
+          c.fillRect(cx - 24, cy - 9, 48, 9);
+          c.fillStyle = '#f43f5e';
+          c.fillRect(cx - 26, cy + 2, 52, 6);
+        } else if (name === 'L') {
+          fillOval(cx, cy, 30, 22, '#000000');
+          fillOval(cx, cy + 2, 24, 16, '#450a0a');
+          c.fillStyle = '#ffffff';
+          c.fillRect(cx - 18, cy - 15, 36, 7);
+          fillOval(cx, cy - 4, 14, 10, '#f43f5e');
+        }
+      }
+
+      function createDefaultVisemes() {
+        return VISEME_NAMES.map((name, i) => {
+          const canvas = createCelCanvas(MOUTH_W, MOUTH_H);
+          drawStarterViseme(canvas, i);
+          return { name, canvas, undoStack: [] };
+        });
+      }
+
+      function makeScene(name) {
+        const s = {
+          id: 'sc_' + Math.random().toString(36).slice(2, 10),
+          name,
+          totalFrames: 24,
+          currentFrame: 0,
+          loopRange: null,
+          cels: new Map(),
+          bgLayer: {
+            canvas: createCelCanvas(),
+            undoStack: [],
+            hasInk: false,
+            visible: false,
+            name: '',
+            offsetX: 0,
+            offsetY: 0
+          },
+          mouthLayer: {
+            visible: false,
+            keys: new Map(), // frame -> { viseme: 0, x, y, scale }
+            visemes: createDefaultVisemes()
+          },
+          cameraKeys: new Map(),
+          audio: null
+        };
+        const c = createCelCanvas();
+        s.cels.set(0, { canvas: c, undoStack: [], hasInk: false, duration: 1, offsetX: 0, offsetY: 0 });
+        return s;
+      }
+
+      const app = {
+        mode: 'editor',
+        fps: 12,
+        loop: true,
+        scenes: [makeScene('Scene 1')],
+        activeSceneId: null,
+        scenesPlaying: false,
+        scenesGlobalFrame: 0,
+        scenesBoardZoomPx: 220
+      };
+      app.activeSceneId = app.scenes[0].id;
+
+      const state = {
+        isPlaying: false,
+        onionSkin: false,
+        onionBefore: true,
+        onionAfter: false,
+        showCelLayer: true,
+        applyCamera: true,
+        showBgTrack: false,
+        showMouthTrack: false,
+        showAudioTrack: false,
+        showCamTrack: false,
+        activeLayer: 'cel', // 'cel' | 'bg' | 'mouth'
+        selectedTrack: 'cel', // 'cel' | 'audio' | 'mouth' | 'bg'
+
+        tool: 'brush',
+        brushColor: '#000000',
+        brushSize: 4,
+        fillGapRadius: 0,
+
+        viewZoom: 1,
+        viewPanX: 0,
+        viewPanY: 0,
+        timelineZoom: 1,
+
+        get totalFrames() { return activeScene().totalFrames; },
+        set totalFrames(v) { activeScene().totalFrames = v; },
+        get currentFrame() { return activeScene().currentFrame; },
+        set currentFrame(v) { activeScene().currentFrame = v; },
+        get loopRange() { return activeScene().loopRange; },
+        set loopRange(v) { activeScene().loopRange = v; },
+        get cels() { return activeScene().cels; },
+        get bgLayer() { return activeScene().bgLayer; },
+        get mouthLayer() { return activeScene().mouthLayer; },
+        get cameraKeys() { return activeScene().cameraKeys; },
+        get audio() { return activeScene().audio; },
+        set audio(v) { activeScene().audio = v; },
+        get fps() { return app.fps; },
+        set fps(v) { app.fps = v; },
+        get loop() { return app.loop; },
+        set loop(v) { app.loop = v; }
+      };
+
+      function activeScene() {
+        return app.scenes.find(s => s.id === app.activeSceneId) || app.scenes[0];
+      }
+
+      // DOM References
+      const editorView = document.getElementById('editorView');
+      const scenesView = document.getElementById('scenesView');
+      const btnModeEditor = document.getElementById('btnModeEditor');
+      const btnModeScenes = document.getElementById('btnModeScenes');
+      const activeSceneLabel = document.getElementById('activeSceneLabel');
+      const editorOnionGroup = document.getElementById('editorOnionGroup');
+
+      const stageContainer = document.getElementById('stageContainer');
+      const stage = document.getElementById('stage');
+      const ctx = stage.getContext('2d');
+
+      const stageBadge = document.getElementById('stageBadge');
+      const btnResetView = document.getElementById('btnResetView');
+      const frameIndicator = document.getElementById('frameIndicator');
+      const camPopover = document.getElementById('camPopover');
+      const btnToggleCamPanel = document.getElementById('btnToggleCamPanel');
+      const timelinePanel = document.getElementById('timelinePanel');
+      const timelineScroll = document.getElementById('timelineScroll');
+      const timelineGrid = document.getElementById('timelineGrid');
+      const btnResetTimelineZoom = document.getElementById('btnResetTimelineZoom');
+      const loopRow = document.getElementById('loopRow');
+      const loopSelectionBar = document.getElementById('loopSelectionBar');
+      const loopHighlightOverlay = document.getElementById('loopHighlightOverlay');
+      const loopRangeBadge = document.getElementById('loopRangeBadge');
+      const rulerRow = document.getElementById('rulerRow');
+      const celTrackLabel = document.getElementById('celTrackLabel');
+      const celTrackRow = document.getElementById('celTrackRow');
+      const mouthTrackLabel = document.getElementById('mouthTrackLabel');
+      const mouthTrackRow = document.getElementById('mouthTrackRow');
+      const bgTrackLabel = document.getElementById('bgTrackLabel');
+      const bgTrackRow = document.getElementById('bgTrackRow');
+      const bgSpanBar = document.getElementById('bgSpanBar');
+      const audioTrackLabel = document.getElementById('audioTrackLabel');
+      const audioTrackRow = document.getElementById('audioTrackRow');
+      const audioWaveCanvas = document.getElementById('audioWaveCanvas');
+      const audioEmptyHint = document.getElementById('audioEmptyHint');
+      const audioRecBadge = document.getElementById('audioRecBadge');
+      const audioClipBox = document.getElementById('audioClipBox');
+      const audioClipLabel = document.getElementById('audioClipLabel');
+      const camTrackRow = document.getElementById('camTrackRow');
+      const camTrackLabel = document.getElementById('camTrackLabel');
+      const playheadLine = document.getElementById('playheadLine');
+      const celContextMenu = document.getElementById('celContextMenu');
+      const audioContextMenu = document.getElementById('audioContextMenu');
+
+      // Mouth Widget DOM
+      const mouthWidget = document.getElementById('mouthWidget');
+      const mouthPreviewCanvas = document.getElementById('mouthPreviewCanvas');
+      const mouthFrameBox = document.getElementById('mouthFrameBox');
+      const mouthFrameLabel = document.getElementById('mouthFrameLabel');
+      const mouthSheetPop = document.getElementById('mouthSheetPop');
+      const mouthSheetGrid = document.getElementById('mouthSheetGrid');
+      const btnMouthDraw = document.getElementById('btnMouthDraw');
+      const btnMouthMove = document.getElementById('btnMouthMove');
+
+      const btnCanvasSize = document.getElementById('btnCanvasSize');
+      const sizeMenu = document.getElementById('sizeMenu');
+      const sizeWrap = document.getElementById('sizeWrap');
+      const btnExportMenu = document.getElementById('btnExportMenu');
+      const exportMenu = document.getElementById('exportMenu');
+      const exportWrap = document.getElementById('exportWrap');
+
+      const camEase = document.getElementById('camEase');
+      const camScale = document.getElementById('camScale');
+      const camX = document.getElementById('camX');
+      const camY = document.getElementById('camY');
+
+      const scenesPreviewCanvas = document.getElementById('scenesPreviewCanvas');
+      const spCtx = scenesPreviewCanvas.getContext('2d');
+      const scenesBoard = document.getElementById('scenesBoard');
+      const scenesGrid = document.getElementById('scenesGrid');
+      const scenesZoomSlider = document.getElementById('scenesZoomSlider');
+      const scenesScrubber = document.getElementById('scenesScrubber');
+      const scenesFrameReadout = document.getElementById('scenesFrameReadout');
+      const btnScenesPlay = document.getElementById('btnScenesPlay');
+      const btnScenesLoop = document.getElementById('btnScenesLoop');
+
+      // ==========================================
+      // Page Mode Switching (Editor <-> Scenes)
+      // ==========================================
+      function switchToMode(mode) {
+        if (state.isPlaying) togglePlay();
+        if (app.scenesPlaying) toggleScenesPlay();
+
+        app.mode = mode;
+        const isEditor = mode === 'editor';
+
+        editorView.classList.toggle('hidden-view', !isEditor);
+        scenesView.classList.toggle('hidden-view', isEditor);
+        btnModeEditor.classList.toggle('active', isEditor);
+        btnModeScenes.classList.toggle('active', !isEditor);
+        editorOnionGroup.style.visibility = isEditor ? 'visible' : 'hidden';
+
+        if (isEditor) {
+          loadSceneIntoEditorUI(activeScene());
+          requestAnimationFrame(() => {
+            resizeStageCanvas();
+            renderTimeline();
+            renderStage();
+          });
+        } else {
+          renderScenesView();
+        }
+      }
+
+      btnModeEditor.onclick = () => switchToMode('editor');
+      btnModeScenes.onclick = () => switchToMode('scenes');
+
+      function selectSceneForEditor(sceneId, jumpToEditor = false) {
+        app.activeSceneId = sceneId;
+        loadSceneIntoEditorUI(activeScene());
+        if (jumpToEditor) switchToMode('editor');
+        else renderScenesGrid();
+      }
+
+      function loadSceneIntoEditorUI(sc) {
+        activeSceneLabel.textContent = sc.name;
+        const hasAudio = Boolean(sc.audio);
+        document.getElementById('btnFitAudio').style.display = hasAudio ? 'inline-flex' : 'none';
+        document.getElementById('btnClearAudio').style.display = hasAudio ? 'inline-flex' : 'none';
+        document.getElementById('btnMuteAudio').textContent = (hasAudio && sc.audio.muted) ? '🔇' : '🔊';
+        if (hasAudio && !state.showAudioTrack) toggleAudioTrack(true);
+        if (sc.bgLayer.hasInk && !state.showBgTrack) toggleBgTrack(true);
+        if ((sc.mouthLayer.visible || sc.mouthLayer.keys.size > 0) && !state.showMouthTrack) toggleMouthTrack(true);
+        updateBgUI();
+        updateMouthWidget();
+        syncInspectorUI();
+        renderTimeline();
+        renderStage();
+      }
+
+      function setWorldResolution(newW, newH) {
+        if (WORLD_W === newW && WORLD_H === newH) return;
+        const shiftX = Math.round((newW - WORLD_W) / 2);
+        const shiftY = Math.round((newH - WORLD_H) / 2);
+
+        WORLD_W = newW;
+        WORLD_H = newH;
+
+        for (const sc of app.scenes) {
+          for (const cel of sc.cels.values()) {
+            cel.offsetX += shiftX;
+            cel.offsetY += shiftY;
+          }
+          sc.bgLayer.offsetX += shiftX;
+          sc.bgLayer.offsetY += shiftY;
+          for (const mk of sc.mouthLayer.keys.values()) {
+            mk.x += shiftX;
+            mk.y += shiftY;
+          }
+        }
+
+        btnCanvasSize.textContent = `📐 ${WORLD_W}×${WORLD_H} ▾`;
+        updateStageBadge();
+        if (app.mode === 'editor') renderStage();
+        else renderScenesView();
+      }
+
+      btnCanvasSize.onclick = (e) => {
+        e.stopPropagation();
+        exportMenu.classList.remove('open');
+        sizeMenu.classList.toggle('open');
+      };
+
+      sizeMenu.querySelectorAll('[data-res]').forEach(btn => {
+        btn.onclick = () => {
+          const [w, h] = btn.dataset.res.split('x').map(Number);
+          setWorldResolution(w, h);
+          sizeMenu.classList.remove('open');
+        };
+      });
+
+      function resizeStageCanvas() {
+        const w = Math.max(100, stageContainer.clientWidth);
+        const h = Math.max(100, stageContainer.clientHeight);
+        if (stage.width !== w || stage.height !== h) {
+          stage.width = w;
+          stage.height = h;
+          ctx.imageSmoothingEnabled = false;
+          renderStage();
+        }
+      }
+
+      const stageRO = new ResizeObserver(() => resizeStageCanvas());
+      stageRO.observe(stageContainer);
+
+      function getFitScale() {
+        return Math.min((stage.width - 36) / WORLD_W, (stage.height - 36) / WORLD_H);
+      }
+
+      function getTotalViewScale() {
+        return getFitScale() * state.viewZoom;
+      }
+
+      function triggerDownload(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      }
+
+      btnExportMenu.onclick = (e) => {
+        e.stopPropagation();
+        sizeMenu.classList.remove('open');
+        exportMenu.classList.toggle('open');
+      };
+
+      function toggleCameraPanel(forceState) {
+        const show = typeof forceState === 'boolean' ? forceState : !camPopover.classList.contains('open');
+        camPopover.classList.toggle('open', show);
+        btnToggleCamPanel.classList.toggle('active', show);
+      }
+
+      btnToggleCamPanel.onclick = (e) => {
+        e.stopPropagation();
+        toggleCameraPanel();
+      };
+      document.getElementById('btnCloseCamPanel').onclick = () => toggleCameraPanel(false);
+
+      function getCelEntryInScene(sc, frame) {
+        for (const [start, cel] of sc.cels.entries()) {
+          if (frame >= start && frame < start + cel.duration) {
+            return { start, cel };
+          }
+        }
+        return null;
+      }
+
+      function getCelEntryAt(frame) {
+        return getCelEntryInScene(activeScene(), frame);
+      }
+
+      function getSortedCelStarts() {
+        return Array.from(state.cels.keys()).sort((a, b) => a - b);
+      }
+
+      function getPrevCelBefore(frame) {
+        const starts = getSortedCelStarts();
+        let best = null;
+        for (const s of starts) {
+          if (s < frame) best = { start: s, cel: state.cels.get(s) };
+        }
+        return best;
+      }
+
+      function getNextCelAfter(frame) {
+        const starts = getSortedCelStarts();
+        for (const s of starts) {
+          if (s > frame) return { start: s, cel: state.cels.get(s) };
+        }
+        return null;
+      }
+
+      function ensureCelAt(frame, clonePrev = false) {
+        const existing = getCelEntryAt(frame);
+        if (existing) return existing;
+
+        let canvas = createCelCanvas();
+        let offsetX = 0;
+        let offsetY = 0;
+        let hasInk = false;
+
+        if (clonePrev) {
+          const prev = getPrevCelBefore(frame);
+          if (prev) {
+            canvas = createCelCanvas(prev.cel.canvas.width, prev.cel.canvas.height);
+            canvas.getContext('2d').drawImage(prev.cel.canvas, 0, 0);
+            offsetX = prev.cel.offsetX;
+            offsetY = prev.cel.offsetY;
+            hasInk = prev.cel.hasInk;
+          }
+        }
+
+        const cel = { canvas, undoStack: [], hasInk, duration: 1, offsetX, offsetY };
+        state.cels.set(frame, cel);
+        return { start: frame, cel };
+      }
+
+      function ensureLayerCoversFrame(layerObj) {
+        const cw = layerObj.canvas.width;
+        const ch = layerObj.canvas.height;
+        const ox = layerObj.offsetX;
+        const oy = layerObj.offsetY;
+
+        const newOx = Math.min(ox, 0);
+        const newOy = Math.min(oy, 0);
+        const newMaxX = Math.max(ox + cw, WORLD_W);
+        const newMaxY = Math.max(oy + ch, WORLD_H);
+        const newW = Math.min(8192, newMaxX - newOx);
+        const newH = Math.min(8192, newMaxY - newOy);
+
+        if (newW === cw && newH === ch && newOx === ox && newOy === oy) return;
+
+        const nextCanvas = createCelCanvas(newW, newH);
+        const nctx = nextCanvas.getContext('2d');
+        nctx.imageSmoothingEnabled = false;
+        nctx.drawImage(layerObj.canvas, ox - newOx, oy - newOy);
+
+        layerObj.canvas = nextCanvas;
+        layerObj.offsetX = newOx;
+        layerObj.offsetY = newOy;
+      }
+
+      function pushPixelUndo(layerObj, fixedDims = false) {
+        const cctx = layerObj.canvas.getContext('2d');
+        const w = layerObj.canvas.width;
+        const h = layerObj.canvas.height;
+        layerObj.undoStack.push({
+          type: 'pixels',
+          imgData: cctx.getImageData(0, 0, w, h),
+          w,
+          h,
+          offsetX: fixedDims ? 0 : (layerObj.offsetX || 0),
+          offsetY: fixedDims ? 0 : (layerObj.offsetY || 0)
+        });
+        if (layerObj.undoStack.length > 20) layerObj.undoStack.shift();
+      }
+
+      function pushMoveUndo(layerObj, offsetX, offsetY) {
+        layerObj.undoStack.push({ type: 'move', offsetX, offsetY });
+        if (layerObj.undoStack.length > 25) layerObj.undoStack.shift();
+      }
+
+      // Hard-Edge Pixel Brush & Cached Preview Mask
+      const brushMaskCache = new Map();
+
+      function getBrushMask(size) {
+        if (brushMaskCache.has(size)) return brushMaskCache.get(size);
+
+        const cells = [];
+        const occupied = new Set();
+
+        if (size <= 1) {
+          cells.push({ dx: 0, dy: 0 });
+          occupied.add('0,0');
+        } else {
+          const r = size / 2;
+          const rSq = r * r;
+          const minOff = -Math.floor(r);
+          const maxOff = Math.ceil(r) - 1;
+          const centerShift = (size % 2 === 0) ? -0.5 : 0;
+
+          for (let dy = minOff; dy <= maxOff; dy++) {
+            for (let dx = minOff; dx <= maxOff; dx++) {
+              const distSq = (dx - centerShift) * (dx - centerShift) + (dy - centerShift) * (dy - centerShift);
+              if (distSq <= rSq) {
+                cells.push({ dx, dy });
+                occupied.add(`${dx},${dy}`);
+              }
+            }
+          }
+        }
+
+        const edges = [];
+        for (const { dx, dy } of cells) {
+          if (!occupied.has(`${dx},${dy - 1}`)) edges.push({ x1: dx, y1: dy, x2: dx + 1, y2: dy });
+          if (!occupied.has(`${dx},${dy + 1}`)) edges.push({ x1: dx, y1: dy + 1, x2: dx + 1, y2: dy + 1 });
+          if (!occupied.has(`${dx - 1},${dy}`)) edges.push({ x1: dx, y1: dy, x2: dx, y2: dy + 1 });
+          if (!occupied.has(`${dx + 1},${dy}`)) edges.push({ x1: dx + 1, y1: dy, x2: dx + 1, y2: dy + 1 });
+        }
+
+        const mask = { cells, edges };
+        brushMaskCache.set(size, mask);
+        return mask;
+      }
+
+      function drawPixelDisk(cctx, cx, cy, size, color, isErase) {
+        const x0 = Math.round(cx);
+        const y0 = Math.round(cy);
+        const { cells } = getBrushMask(size);
+        if (!isErase) cctx.fillStyle = color;
+
+        for (const { dx, dy } of cells) {
+          if (isErase) cctx.clearRect(x0 + dx, y0 + dy, 1, 1);
+          else cctx.fillRect(x0 + dx, y0 + dy, 1, 1);
+        }
+      }
+
+      function drawPixelLine(cctx, p1, p2, size, color, isErase) {
+        let x0 = Math.round(p1.x);
+        let y0 = Math.round(p1.y);
+        const x1 = Math.round(p2.x);
+        const y1 = Math.round(p2.y);
+        const dx = Math.abs(x1 - x0);
+        const dy = Math.abs(y1 - y0);
+        const sx = x0 < x1 ? 1 : -1;
+        const sy = y0 < y1 ? 1 : -1;
+        let err = dx - dy;
+
+        while (true) {
+          drawPixelDisk(cctx, x0, y0, size, color, isErase);
+          if (x0 === x1 && y0 === y1) break;
+          const e2 = 2 * err;
+          if (e2 > -dy) { err -= dy; x0 += sx; }
+          if (e2 < dx) { err += dx; y0 += sy; }
+        }
+      }
+
+      // Morphological Closing Flood Fill
+      function buildClosedBarrier(rawBarrier, w, h, r) {
+        if (r <= 0) return rawBarrier;
+        const n = w * h;
+        const tmp = new Uint8Array(n);
+        const dilated = new Uint8Array(n);
+        const closed = new Uint8Array(n);
+
+        for (let y = 0; y < h; y++) {
+          const row = y * w;
+          let count = 0;
+          for (let x = 0; x <= Math.min(w - 1, r); x++) count += rawBarrier[row + x];
+          for (let x = 0; x < w; x++) {
+            tmp[row + x] = count > 0 ? 1 : 0;
+            const addX = x + r + 1;
+            const remX = x - r;
+            if (addX < w) count += rawBarrier[row + addX];
+            if (remX >= 0) count -= rawBarrier[row + remX];
+          }
+        }
+
+        for (let x = 0; x < w; x++) {
+          let count = 0;
+          for (let y = 0; y <= Math.min(h - 1, r); y++) count += tmp[y * w + x];
+          for (let y = 0; y < h; y++) {
+            dilated[y * w + x] = count > 0 ? 1 : 0;
+            const addY = y + r + 1;
+            const remY = y - r;
+            if (addY < h) count += tmp[addY * w + x];
+            if (remY >= 0) count -= tmp[remY * w + x];
+          }
+        }
+
+        for (let y = 0; y < h; y++) {
+          const row = y * w;
+          let zeroCount = 0;
+          for (let x = 0; x <= Math.min(w - 1, r); x++) if (dilated[row + x] === 0) zeroCount++;
+          for (let x = 0; x < w; x++) {
+            tmp[row + x] = zeroCount === 0 ? 1 : 0;
+            const addX = x + r + 1;
+            const remX = x - r;
+            if (addX < w && dilated[row + addX] === 0) zeroCount++;
+            if (remX >= 0 && dilated[row + remX] === 0) zeroCount--;
+          }
+        }
+
+        for (let x = 0; x < w; x++) {
+          let zeroCount = 0;
+          for (let y = 0; y <= Math.min(h - 1, r); y++) if (tmp[y * w + x] === 0) zeroCount++;
+          for (let y = 0; y < h; y++) {
+            closed[y * w + x] = zeroCount === 0 ? 1 : 0;
+            const addY = y + r + 1;
+            const remY = y - r;
+            if (addY < h && tmp[addY * w + x] === 0) zeroCount++;
+            if (remY >= 0 && tmp[remY * w + x] === 0) zeroCount--;
+          }
+        }
+
+        return closed;
+      }
+
+      function hexToRgba(hex) {
+        const clean = hex.replace('#', '');
+        const n = parseInt(clean, 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 255];
+      }
+
+      function floodFillLayer(layerObj, localX, localY, hexColor, isErase = false, fixedDims = false) {
+        if (!fixedDims) ensureLayerCoversFrame(layerObj);
+        const w = layerObj.canvas.width;
+        const h = layerObj.canvas.height;
+        const sx = Math.round(localX);
+        const sy = Math.round(localY);
+        if (sx < 0 || sx >= w || sy < 0 || sy >= h) return false;
+
+        const cctx = layerObj.canvas.getContext('2d');
+        const imgData = cctx.getImageData(0, 0, w, h);
+        const data = imgData.data;
+
+        const [fr, fg, fb, fa] = isErase ? [0, 0, 0, 0] : hexToRgba(hexColor);
+        const startIdx = (sy * w + sx) * 4;
+        const tr = data[startIdx];
+        const tg = data[startIdx + 1];
+        const tb = data[startIdx + 2];
+        const ta = data[startIdx + 3];
+
+        if (tr === fr && tg === fg && tb === fb && ta === fa) return false;
+
+        const totalPx = w * h;
+        const rawBarrier = new Uint8Array(totalPx);
+        for (let i = 0; i < totalPx; i++) {
+          const p = i * 4;
+          if (data[p] !== tr || data[p + 1] !== tg || data[p + 2] !== tb || data[p + 3] !== ta) {
+            rawBarrier[i] = 1;
+          }
+        }
+
+        const gapR = (!isErase && state.fillGapRadius > 0) ? state.fillGapRadius : 0;
+        const barrier = buildClosedBarrier(rawBarrier, w, h, gapR);
+        if (barrier[sy * w + sx] === 1) return false;
+
+        pushPixelUndo(layerObj, fixedDims);
+
+        const visited = new Uint8Array(totalPx);
+        const stack = [sx, sy];
+
+        while (stack.length > 0) {
+          const y = stack.pop();
+          const x = stack.pop();
+          if (visited[y * w + x] || barrier[y * w + x] || rawBarrier[y * w + x]) continue;
+
+          let lx = x;
+          while (lx >= 0 && !visited[y * w + lx] && !barrier[y * w + lx] && !rawBarrier[y * w + lx]) lx--;
+          lx++;
+
+          let rx = x;
+          while (rx < w && !visited[y * w + rx] && !barrier[y * w + rx] && !rawBarrier[y * w + rx]) rx++;
+          rx--;
+
+          let spanUp = false;
+          let spanDown = false;
+
+          for (let cx = lx; cx <= rx; cx++) {
+            const cellIdx = y * w + cx;
+            visited[cellIdx] = 1;
+            const dIdx = cellIdx * 4;
+            data[dIdx] = fr;
+            data[dIdx + 1] = fg;
+            data[dIdx + 2] = fb;
+            data[dIdx + 3] = fa;
+
+            if (y > 0) {
+              const upCell = (y - 1) * w + cx;
+              const matchUp = !visited[upCell] && !barrier[upCell] && !rawBarrier[upCell];
+              if (!spanUp && matchUp) {
+                stack.push(cx, y - 1);
+                spanUp = true;
+              } else if (spanUp && !matchUp) {
+                spanUp = false;
+              }
+            }
+
+            if (y < h - 1) {
+              const downCell = (y + 1) * w + cx;
+              const matchDown = !visited[downCell] && !barrier[downCell] && !rawBarrier[downCell];
+              if (!spanDown && matchDown) {
+                stack.push(cx, y + 1);
+                spanDown = true;
+              } else if (spanDown && !matchDown) {
+                spanDown = false;
+              }
+            }
+          }
+        }
+
+        cctx.putImageData(imgData, 0, 0);
+        if (!isErase) layerObj.hasInk = true;
+        return true;
+      }
+
+      const gapCycle = [0, 2, 3, 5];
+      const btnGapCycle = document.getElementById('btnGapCycle');
+      btnGapCycle.onclick = () => {
+        const idx = gapCycle.indexOf(state.fillGapRadius);
+        const nextR = gapCycle[(idx + 1) % gapCycle.length];
+        state.fillGapRadius = nextR;
+        btnGapCycle.textContent = nextR === 0 ? 'Off' : `${nextR * 2}px`;
+        btnGapCycle.classList.toggle('active', nextR > 0);
+      };
+
+      // ==========================================
+      // MOUTH SHAPES / VISEMES LAYER
+      // ==========================================
+      function ensureMouthInitInScene(sc) {
+        if (sc.mouthLayer.keys.size === 0) {
+          sc.mouthLayer.keys.set(0, {
+            viseme: 0,
+            x: Math.round(WORLD_W / 2),
+            y: Math.round(WORLD_H * 0.56),
+            scale: 100
+          });
+        }
+      }
+
+      function getEvaluatedMouthInScene(sc, frame) {
+        if (!sc.mouthLayer.visible || sc.mouthLayer.keys.size === 0) return null;
+        if (sc.mouthLayer.keys.has(frame)) {
+          return { keyFrame: frame, ...sc.mouthLayer.keys.get(frame), isKey: true };
+        }
+        let bestF = null;
+        let firstF = null;
+        for (const f of sc.mouthLayer.keys.keys()) {
+          if (firstF === null || f < firstF) firstF = f;
+          if (f <= frame && (bestF === null || f > bestF)) bestF = f;
+        }
+        const useF = bestF !== null ? bestF : firstF;
+        return { keyFrame: useF, ...sc.mouthLayer.keys.get(useF), isKey: false };
+      }
+
+      function getActiveMouthState() {
+        ensureMouthInitInScene(activeScene());
+        const evalM = getEvaluatedMouthInScene(activeScene(), state.currentFrame);
+        if (evalM) return evalM;
+        // Even if hidden, inspect key 0
+        const firstF = Math.min(...state.mouthLayer.keys.keys());
+        return { keyFrame: firstF, ...state.mouthLayer.keys.get(firstF) };
+      }
+
+      function setMouthKeyAtCurrentFrame(patch) {
+        ensureMouthInitInScene(activeScene());
+        const cur = getActiveMouthState();
+        state.mouthLayer.keys.set(state.currentFrame, {
+          viseme: patch.viseme !== undefined ? patch.viseme : cur.viseme,
+          x: patch.x !== undefined ? patch.x : cur.x,
+          y: patch.y !== undefined ? patch.y : cur.y,
+          scale: patch.scale !== undefined ? patch.scale : cur.scale
+        });
+      }
+
+      function toggleMouthTrack(forceState) {
+        state.showMouthTrack = typeof forceState === 'boolean' ? forceState : !state.showMouthTrack;
+        const btn = document.getElementById('btnToggleMouthTrack');
+        btn.textContent = `Mouth: ${state.showMouthTrack ? 'On' : 'Off'}`;
+        btn.classList.toggle('active', state.showMouthTrack);
+        mouthTrackLabel.classList.toggle('hidden-track', !state.showMouthTrack);
+        mouthTrackRow.classList.toggle('hidden-track', !state.showMouthTrack);
+
+        if (state.showMouthTrack) {
+          state.mouthLayer.visible = true;
+          ensureMouthInitInScene(activeScene());
+        } else if (state.activeLayer === 'mouth') {
+          setActiveLayer('cel');
+        }
+        updateMouthWidget();
+        updateTimelinePanelHeight();
+        renderTimeline();
+        renderStage();
+      }
+
+      document.getElementById('btnToggleMouthTrack').onclick = () => toggleMouthTrack();
+
+      function updateMouthWidget() {
+        const showWidget = state.showMouthTrack && state.mouthLayer.visible;
+        mouthWidget.classList.toggle('open', showWidget);
+        document.getElementById('btnVisMouth').style.opacity = state.mouthLayer.visible ? '1' : '0.35';
+        btnMouthDraw.classList.toggle('active', state.activeLayer === 'mouth' && state.tool !== 'moveCam');
+        btnMouthMove.classList.toggle('active', state.activeLayer === 'mouth' && state.tool === 'moveCam');
+
+        if (!showWidget) return;
+        const cur = getActiveMouthState();
+        const vis = state.mouthLayer.visemes[cur.viseme] || state.mouthLayer.visemes[0];
+        mouthFrameLabel.textContent = vis.name;
+
+        const pctx = mouthPreviewCanvas.getContext('2d');
+        pctx.imageSmoothingEnabled = false;
+        pctx.clearRect(0, 0, MOUTH_W, MOUTH_H);
+        pctx.drawImage(vis.canvas, 0, 0);
+
+        if (mouthSheetPop.classList.contains('open')) renderMouthSheet();
+      }
+
+      function renderMouthSheet() {
+        mouthSheetGrid.innerHTML = '';
+        const cur = getActiveMouthState();
+        state.mouthLayer.visemes.forEach((vis, idx) => {
+          const slot = document.createElement('button');
+          slot.className = 'mouth-slot' + (idx === cur.viseme ? ' active' : '');
+          const c = document.createElement('canvas');
+          c.width = MOUTH_W;
+          c.height = MOUTH_H;
+          const sctx = c.getContext('2d');
+          sctx.imageSmoothingEnabled = false;
+          sctx.drawImage(vis.canvas, 0, 0);
+          slot.appendChild(c);
+
+          const lbl = document.createElement('span');
+          lbl.textContent = vis.name;
+          slot.appendChild(lbl);
+
+          slot.onclick = () => {
+            setMouthKeyAtCurrentFrame({ viseme: idx });
+            updateMouthWidget();
+            renderTimeline();
+            renderStage();
+          };
+          mouthSheetGrid.appendChild(slot);
+        });
+      }
+
+      function cycleMouthViseme(dir) {
+        if (!state.mouthLayer.visible) state.mouthLayer.visible = true;
+        const cur = getActiveMouthState();
+        const len = state.mouthLayer.visemes.length;
+        const nextIdx = (cur.viseme + dir + len) % len;
+        setMouthKeyAtCurrentFrame({ viseme: nextIdx });
+        updateMouthWidget();
+        renderTimeline();
+        renderStage();
+      }
+
+      document.getElementById('btnMouthPrev').onclick = () => cycleMouthViseme(-1);
+      document.getElementById('btnMouthNext').onclick = () => cycleMouthViseme(1);
+
+      mouthFrameBox.onclick = () => {
+        mouthSheetPop.classList.toggle('open');
+        if (mouthSheetPop.classList.contains('open')) renderMouthSheet();
+      };
+      document.getElementById('btnMouthAll').onclick = () => {
+        mouthSheetPop.classList.toggle('open');
+        if (mouthSheetPop.classList.contains('open')) renderMouthSheet();
+      };
+      document.getElementById('btnMouthClosePop').onclick = () => mouthSheetPop.classList.remove('open');
+
+      btnMouthDraw.onclick = () => {
+        setActiveLayer('mouth');
+        if (state.tool === 'moveCam') selectTool('brush');
+        updateMouthWidget();
+        renderStage();
+      };
+
+      btnMouthMove.onclick = () => {
+        setActiveLayer('mouth');
+        selectTool('moveCam');
+        updateMouthWidget();
+        renderStage();
+      };
+
+      document.getElementById('btnMouthClearShape').onclick = () => {
+        const cur = getActiveMouthState();
+        const vis = state.mouthLayer.visemes[cur.viseme];
+        pushPixelUndo(vis, true);
+        vis.canvas.getContext('2d').clearRect(0, 0, MOUTH_W, MOUTH_H);
+        updateMouthWidget();
+        renderStage();
+      };
+
+      document.getElementById('btnMouthResetShape').onclick = () => {
+        const cur = getActiveMouthState();
+        const vis = state.mouthLayer.visemes[cur.viseme];
+        pushPixelUndo(vis, true);
+        drawStarterViseme(vis.canvas, cur.viseme);
+        updateMouthWidget();
+        renderStage();
+      };
+
+      document.getElementById('btnVisMouth').onclick = (e) => {
+        e.stopPropagation();
+        state.mouthLayer.visible = !state.mouthLayer.visible;
+        if (state.mouthLayer.visible) ensureMouthInitInScene(activeScene());
+        updateMouthWidget();
+        renderStage();
+      };
+
+      mouthTrackLabel.querySelector('.track-tag').onclick = () => setActiveLayer('mouth');
+      mouthTrackRow.addEventListener('pointerdown', (e) => {
+        if (state.isPlaying) togglePlay();
+        setActiveLayer('mouth');
+        state.selectedTrack = 'mouth';
+        audioClipBox.classList.remove('selected');
+        goToFrame(frameFromClientX(e.clientX));
+      });
+
+      // Camera Interpolation
+      function getEvaluatedCameraInScene(sc, frame) {
+        if (!state.applyCamera || sc.cameraKeys.size === 0) {
+          return { x: 0, y: 0, scale: 100, ease: 'easeInOut' };
+        }
+        if (sc.cameraKeys.has(frame)) {
+          return { ...sc.cameraKeys.get(frame) };
+        }
+
+        let prevF = null;
+        let nextF = null;
+        for (const f of sc.cameraKeys.keys()) {
+          if (f < frame && (prevF === null || f > prevF)) prevF = f;
+          if (f > frame && (nextF === null || f < nextF)) nextF = f;
+        }
+
+        if (prevF !== null && nextF !== null) {
+          const a = sc.cameraKeys.get(prevF);
+          const b = sc.cameraKeys.get(nextF);
+          let t = (frame - prevF) / (nextF - prevF);
+          if (a.ease === 'easeInOut') {
+            t = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+          }
+          return {
+            x: a.x + (b.x - a.x) * t,
+            y: a.y + (b.y - a.y) * t,
+            scale: a.scale + (b.scale - a.scale) * t,
+            ease: a.ease
+          };
+        }
+
+        if (prevF !== null) return { ...sc.cameraKeys.get(prevF) };
+        if (nextF !== null) return { ...sc.cameraKeys.get(nextF) };
+        return { x: 0, y: 0, scale: 100, ease: 'easeInOut' };
+      }
+
+      function getEvaluatedCamera(frame) {
+        return getEvaluatedCameraInScene(activeScene(), frame);
+      }
+
+      const onionCanvas = createCelCanvas();
+      const onionCtx = onionCanvas.getContext('2d');
+      onionCtx.imageSmoothingEnabled = false;
+
+      function drawTintedCel(targetCtx, cel, tintColor, alpha) {
+        const w = cel.canvas.width;
+        const h = cel.canvas.height;
+        if (onionCanvas.width !== w || onionCanvas.height !== h) {
+          onionCanvas.width = w;
+          onionCanvas.height = h;
+        }
+        onionCtx.imageSmoothingEnabled = false;
+        onionCtx.clearRect(0, 0, w, h);
+        onionCtx.globalCompositeOperation = 'source-over';
+        onionCtx.drawImage(cel.canvas, 0, 0);
+        onionCtx.globalCompositeOperation = 'source-in';
+        onionCtx.fillStyle = tintColor;
+        onionCtx.fillRect(0, 0, w, h);
+        onionCtx.globalCompositeOperation = 'source-over';
+
+        targetCtx.save();
+        targetCtx.imageSmoothingEnabled = false;
+        targetCtx.globalAlpha = alpha;
+        targetCtx.drawImage(onionCanvas, cel.offsetX, cel.offsetY);
+        targetCtx.restore();
+      }
+
+      let hoverStagePt = null;
+      let isRightErasing = false;
+
+      function renderSceneToContext(sc, targetCtx, targetW, targetH, frame, forExport = false, useViewport = false) {
+        const cam = getEvaluatedCameraInScene(sc, frame);
+        const cs = cam.scale / 100;
+        const fit = Math.min(targetW / WORLD_W, targetH / WORLD_H);
+        const totalViewScale = useViewport ? getTotalViewScale() : fit;
+        const vx = useViewport ? state.viewPanX : 0;
+        const vy = useViewport ? state.viewPanY : 0;
+
+        targetCtx.imageSmoothingEnabled = false;
+        targetCtx.clearRect(0, 0, targetW, targetH);
+        targetCtx.fillStyle = '#000000';
+        targetCtx.fillRect(0, 0, targetW, targetH);
+
+        targetCtx.save();
+        targetCtx.imageSmoothingEnabled = false;
+
+        targetCtx.translate(targetW / 2 + vx, targetH / 2 + vy);
+        targetCtx.scale(totalViewScale, totalViewScale);
+        targetCtx.translate(-WORLD_W / 2, -WORLD_H / 2);
+
+        targetCtx.translate(WORLD_W / 2 + cam.x, WORLD_H / 2 + cam.y);
+        targetCtx.scale(cs, cs);
+        targetCtx.translate(-WORLD_W / 2, -WORLD_H / 2);
+
+        targetCtx.save();
+        targetCtx.beginPath();
+        targetCtx.rect(0, 0, WORLD_W, WORLD_H);
+        targetCtx.clip();
+
+        targetCtx.fillStyle = '#ffffff';
+        targetCtx.fillRect(0, 0, WORLD_W, WORLD_H);
+
+        if (sc.bgLayer.visible && sc.bgLayer.hasInk) {
+          targetCtx.imageSmoothingEnabled = false;
+          targetCtx.drawImage(sc.bgLayer.canvas, sc.bgLayer.offsetX, sc.bgLayer.offsetY);
+        }
+
+        const activeEntry = getCelEntryInScene(sc, frame);
+
+        if (!forExport && useViewport && !state.isPlaying && state.onionSkin && state.showCelLayer) {
+          if (state.onionBefore) {
+            const prevEntry = activeEntry ? getPrevCelBefore(activeEntry.start) : getPrevCelBefore(frame);
+            if (prevEntry && prevEntry.cel.hasInk) {
+              drawTintedCel(targetCtx, prevEntry.cel, '#ef4444', 0.25);
+            }
+          }
+          if (state.onionAfter) {
+            const nextEntry = activeEntry ? getNextCelAfter(activeEntry.start) : getNextCelAfter(frame);
+            if (nextEntry && nextEntry.cel.hasInk) {
+              drawTintedCel(targetCtx, nextEntry.cel, '#3b82f6', 0.22);
+            }
+          }
+        }
+
+        if ((forExport || !useViewport || state.showCelLayer) && activeEntry) {
+          targetCtx.imageSmoothingEnabled = false;
+          targetCtx.drawImage(activeEntry.cel.canvas, activeEntry.cel.offsetX, activeEntry.cel.offsetY);
+        }
+
+        // Mouth Layer rendered ON TOP of all other layers
+        const mouthEval = getEvaluatedMouthInScene(sc, frame);
+        if (mouthEval) {
+          const vis = sc.mouthLayer.visemes[mouthEval.viseme] || sc.mouthLayer.visemes[0];
+          const ms = (mouthEval.scale || 100) / 100;
+          const dw = Math.round(MOUTH_W * ms);
+          const dh = Math.round(MOUTH_H * ms);
+          const dx = Math.round(mouthEval.x - dw / 2);
+          const dy = Math.round(mouthEval.y - dh / 2);
+          targetCtx.imageSmoothingEnabled = false;
+          targetCtx.drawImage(vis.canvas, dx, dy, dw, dh);
+
+          if (!forExport && useViewport && !state.isPlaying && state.activeLayer === 'mouth') {
+            const inv = 1 / (totalViewScale * cs);
+            targetCtx.strokeStyle = '#f472b6';
+            targetCtx.lineWidth = 1.5 * inv;
+            targetCtx.setLineDash([5 * inv, 3 * inv]);
+            targetCtx.strokeRect(dx, dy, dw, dh);
+            targetCtx.setLineDash([]);
+          }
+        }
+
+        targetCtx.restore();
+
+        if (!forExport && useViewport) {
+          const inv = 1 / (totalViewScale * cs);
+          targetCtx.strokeStyle = state.tool === 'moveCam' ? '#fbbf24' : 'rgba(255,255,255,0.28)';
+          targetCtx.lineWidth = (state.tool === 'moveCam' ? 2 : 1) * inv;
+          if (state.tool === 'moveCam') targetCtx.setLineDash([6 * inv, 4 * inv]);
+          targetCtx.strokeRect(0, 0, WORLD_W, WORLD_H);
+          targetCtx.setLineDash([]);
+        }
+
+        const showBrushPreview = !forExport && useViewport && !state.isPlaying && hoverStagePt && (state.tool === 'brush' || state.tool === 'eraser' || isRightErasing);
+        if (showBrushPreview) {
+          const wp = stageToWorld(hoverStagePt, cam);
+          const wx = Math.round(wp.x);
+          const wy = Math.round(wp.y);
+          const { cells, edges } = getBrushMask(state.brushSize);
+          const eraseStyle = state.tool === 'eraser' || isRightErasing;
+
+          targetCtx.fillStyle = eraseStyle ? 'rgba(239, 68, 68, 0.22)' : state.brushColor;
+          targetCtx.globalAlpha = eraseStyle ? 1 : 0.35;
+          for (const { dx, dy } of cells) {
+            targetCtx.fillRect(wx + dx, wy + dy, 1, 1);
+          }
+
+          targetCtx.globalAlpha = 1;
+          const invScale = 1 / (totalViewScale * cs);
+          targetCtx.beginPath();
+          for (const ed of edges) {
+            targetCtx.moveTo(wx + ed.x1, wy + ed.y1);
+            targetCtx.lineTo(wx + ed.x2, wy + ed.y2);
+          }
+          targetCtx.strokeStyle = 'rgba(255,255,255,0.9)';
+          targetCtx.lineWidth = Math.max(1.2 * invScale, 0.12);
+          targetCtx.stroke();
+
+          targetCtx.strokeStyle = eraseStyle ? '#ef4444' : 'rgba(0,0,0,0.9)';
+          targetCtx.lineWidth = Math.max(0.75 * invScale, 0.06);
+          targetCtx.stroke();
+        }
+
+        targetCtx.restore();
+      }
+
+      function renderStage(targetCtx = ctx, frame = state.currentFrame, forExport = false) {
+        const w = forExport ? WORLD_W : stage.width;
+        const h = forExport ? WORLD_H : stage.height;
+        renderSceneToContext(activeScene(), targetCtx, w, h, frame, forExport, !forExport);
+      }
+
+      // Stage Coordinate Conversions
+      function getStageCoords(e) {
+        const rect = stage.getBoundingClientRect();
+        return {
+          x: ((e.clientX - rect.left) / Math.max(1, rect.width)) * stage.width,
+          y: ((e.clientY - rect.top) / Math.max(1, rect.height)) * stage.height
+        };
+      }
+
+      function stageToCameraSpace(pt) {
+        const s = getTotalViewScale();
+        return {
+          x: (pt.x - stage.width / 2 - state.viewPanX) / s + WORLD_W / 2,
+          y: (pt.y - stage.height / 2 - state.viewPanY) / s + WORLD_H / 2
+        };
+      }
+
+      function stageToWorld(pt, cam) {
+        const cp = stageToCameraSpace(pt);
+        const cs = cam.scale / 100;
+        return {
+          x: (cp.x - WORLD_W / 2 - cam.x) / cs + WORLD_W / 2,
+          y: (cp.y - WORLD_H / 2 - cam.y) / cs + WORLD_H / 2
+        };
+      }
+
+      function worldToVisemeLocal(worldPt, mouthEval) {
+        const ms = (mouthEval.scale || 100) / 100;
+        return {
+          x: (worldPt.x - mouthEval.x) / ms + MOUTH_W / 2,
+          y: (worldPt.y - mouthEval.y) / ms + MOUTH_H / 2
+        };
+      }
+
+      // Viewport Zoom & Middle-Mouse Pan
+      stageContainer.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const pt = getStageCoords(e);
+        const fit = getFitScale();
+        const oldTotal = fit * state.viewZoom;
+        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        const newZoom = Math.max(0.25, Math.min(20, state.viewZoom * factor));
+        const newTotal = fit * newZoom;
+
+        const relCamX = (pt.x - stage.width / 2 - state.viewPanX) / oldTotal;
+        const relCamY = (pt.y - stage.height / 2 - state.viewPanY) / oldTotal;
+
+        state.viewZoom = newZoom;
+        state.viewPanX = pt.x - stage.width / 2 - relCamX * newTotal;
+        state.viewPanY = pt.y - stage.height / 2 - relCamY * newTotal;
+
+        updateViewResetBtn();
+        updateStageBadge();
+        renderStage();
+      }, { passive: false });
+
+      stageContainer.addEventListener('mousedown', (e) => {
+        if (e.button === 1) e.preventDefault();
+      });
+
+      function updateViewResetBtn() {
+        const modified = Math.abs(state.viewZoom - 1) > 0.01 || Math.abs(state.viewPanX) > 1 || Math.abs(state.viewPanY) > 1;
+        btnResetView.style.display = modified ? 'inline-flex' : 'none';
+      }
+
+      btnResetView.onclick = () => {
+        state.viewZoom = 1;
+        state.viewPanX = 0;
+        state.viewPanY = 0;
+        updateViewResetBtn();
+        updateStageBadge();
+        renderStage();
+      };
+
+      let isPointerDown = false;
+      let isViewPanning = false;
+      let viewPanStart = null;
+      let lastWorldPt = null;
+      let activeDrawTarget = null;
+      let activeDrawIsMouth = false;
+      let moveCamState = null;
+
+      stage.addEventListener('contextmenu', (e) => e.preventDefault());
+
+      stageContainer.addEventListener('pointerdown', (e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          isViewPanning = true;
+          stageContainer.setPointerCapture(e.pointerId);
+          viewPanStart = {
+            clientX: e.clientX,
+            clientY: e.clientY,
+            panX: state.viewPanX,
+            panY: state.viewPanY
+          };
+          stage.style.cursor = 'grabbing';
+        }
+      });
+
+      stageContainer.addEventListener('pointermove', (e) => {
+        if (!isViewPanning || !viewPanStart) return;
+        const rect = stage.getBoundingClientRect();
+        const scaleX = stage.width / Math.max(1, rect.width);
+        const scaleY = stage.height / Math.max(1, rect.height);
+        state.viewPanX = viewPanStart.panX + (e.clientX - viewPanStart.clientX) * scaleX;
+        state.viewPanY = viewPanStart.panY + (e.clientY - viewPanStart.clientY) * scaleY;
+        updateViewResetBtn();
+        renderStage();
+      });
+
+      stageContainer.addEventListener('pointerup', (e) => {
+        if (isViewPanning && e.button === 1) {
+          isViewPanning = false;
+          viewPanStart = null;
+          stage.style.cursor = state.tool === 'moveCam' ? 'move' : 'crosshair';
+        }
+      });
+
+      function getTargetLayerForEdit(createIfMissing, clonePrev) {
+        if (state.activeLayer === 'bg') {
+          if (!state.bgLayer.visible) {
+            state.bgLayer.visible = true;
+            updateBgUI();
+          }
+          return { obj: state.bgLayer, created: false };
+        }
+        const existed = Boolean(getCelEntryAt(state.currentFrame));
+        const entry = createIfMissing ? ensureCelAt(state.currentFrame, clonePrev) : getCelEntryAt(state.currentFrame);
+        return { obj: entry ? entry.cel : null, created: !existed && Boolean(entry) };
+      }
+
+      stage.addEventListener('pointerdown', (e) => {
+        if (e.button === 1 || state.isPlaying) return;
+        stage.setPointerCapture(e.pointerId);
+        const stagePt = getStageCoords(e);
+        hoverStagePt = stagePt;
+        const cam = getEvaluatedCamera(state.currentFrame);
+        isPointerDown = true;
+
+        if (state.tool === 'moveCam') {
+          if (e.button === 2) {
+            moveCamState = { mode: 'camScale', startStagePt: stagePt, startScale: cam.scale };
+          } else if (e.shiftKey) {
+            moveCamState = { mode: 'camPan', startStagePt: stagePt, startX: cam.x, startY: cam.y };
+          } else if (state.activeLayer === 'mouth') {
+            if (!state.mouthLayer.visible) state.mouthLayer.visible = true;
+            const curM = getActiveMouthState();
+            moveCamState = {
+              mode: 'moveMouth',
+              startX: curM.x,
+              startY: curM.y,
+              startStagePt: stagePt,
+              totalScale: (cam.scale / 100) * getTotalViewScale()
+            };
+          } else {
+            const { obj, created } = getTargetLayerForEdit(true, true);
+            pushMoveUndo(obj, obj.offsetX, obj.offsetY);
+            moveCamState = {
+              mode: 'moveFrame',
+              cel: obj,
+              startOffsetX: obj.offsetX,
+              startOffsetY: obj.offsetY,
+              startStagePt: stagePt,
+              totalScale: (cam.scale / 100) * getTotalViewScale(),
+              moved: false
+            };
+            if (created) renderTimeline();
+          }
+          return;
+        }
+
+        const rightErase = e.button === 2;
+        if (rightErase) isRightErasing = true;
+        const worldPt = stageToWorld(stagePt, cam);
+
+        // Drawing / Filling directly into active Mouth Viseme!
+        if (state.activeLayer === 'mouth') {
+          if (!state.mouthLayer.visible) state.mouthLayer.visible = true;
+          const mouthEval = getActiveMouthState();
+          const vis = state.mouthLayer.visemes[mouthEval.viseme];
+          const mp = worldToVisemeLocal(worldPt, mouthEval);
+
+          if (state.tool === 'fill' && !rightErase) {
+            floodFillLayer(vis, mp.x, mp.y, state.brushColor, false, true);
+            updateMouthWidget();
+            renderStage();
+            return;
+          }
+
+          const eraseMode = rightErase || state.tool === 'eraser';
+          activeDrawTarget = vis;
+          activeDrawIsMouth = true;
+          pushPixelUndo(vis, true);
+          const vctx = vis.canvas.getContext('2d');
+          vctx.imageSmoothingEnabled = false;
+          drawPixelDisk(vctx, mp.x, mp.y, state.brushSize, state.brushColor, eraseMode);
+          lastWorldPt = worldPt;
+          updateMouthWidget();
+          renderStage();
+          return;
+        }
+
+        activeDrawIsMouth = false;
+        if (state.tool === 'fill' && !rightErase) {
+          const { obj, created } = getTargetLayerForEdit(true, false);
+          floodFillLayer(obj, worldPt.x - obj.offsetX, worldPt.y - obj.offsetY, state.brushColor, false, false);
+          if (created) renderTimeline();
+          updateBgUI();
+          renderStage();
+          return;
+        }
+
+        const eraseMode = rightErase || state.tool === 'eraser';
+        const { obj, created } = getTargetLayerForEdit(true, eraseMode);
+        ensureLayerCoversFrame(obj);
+        activeDrawTarget = obj;
+        pushPixelUndo(activeDrawTarget);
+
+        const cctx = activeDrawTarget.canvas.getContext('2d');
+        cctx.imageSmoothingEnabled = false;
+        drawPixelDisk(
+          cctx,
+          worldPt.x - activeDrawTarget.offsetX,
+          worldPt.y - activeDrawTarget.offsetY,
+          state.brushSize,
+          state.brushColor,
+          eraseMode
+        );
+        activeDrawTarget.hasInk = true;
+        lastWorldPt = worldPt;
+
+        if (created) renderTimeline();
+        updateBgUI();
+        renderStage();
+      });
+
+      stage.addEventListener('pointermove', (e) => {
+        if (isViewPanning) return;
+        const stagePt = getStageCoords(e);
+        hoverStagePt = stagePt;
+
+        if (!isPointerDown) {
+          if (state.tool === 'brush' || state.tool === 'eraser') renderStage();
+          return;
+        }
+
+        if (state.tool === 'moveCam' && moveCamState) {
+          const dx = stagePt.x - moveCamState.startStagePt.x;
+          const dy = stagePt.y - moveCamState.startStagePt.y;
+
+          if (moveCamState.mode === 'camScale') {
+            const deltaScale = (dx - dy) * 0.55;
+            camScale.value = Math.round(Math.max(20, Math.min(500, moveCamState.startScale + deltaScale)));
+            setCameraKeyframeFromUI(state.currentFrame);
+            syncInspectorUI();
+            renderTimeline();
+            renderStage();
+          } else if (moveCamState.mode === 'camPan') {
+            const vs = getTotalViewScale();
+            camX.value = Math.round(Math.max(-1200, Math.min(1200, moveCamState.startX + dx / vs)));
+            camY.value = Math.round(Math.max(-800, Math.min(800, moveCamState.startY + dy / vs)));
+            setCameraKeyframeFromUI(state.currentFrame);
+            syncInspectorUI();
+            renderTimeline();
+            renderStage();
+          } else if (moveCamState.mode === 'moveMouth') {
+            const dxWorld = Math.round(dx / moveCamState.totalScale);
+            const dyWorld = Math.round(dy / moveCamState.totalScale);
+            setMouthKeyAtCurrentFrame({
+              x: moveCamState.startX + dxWorld,
+              y: moveCamState.startY + dyWorld
+            });
+            renderTimeline();
+            renderStage();
+          } else if (moveCamState.mode === 'moveFrame') {
+            const dxWorld = Math.round(dx / moveCamState.totalScale);
+            const dyWorld = Math.round(dy / moveCamState.totalScale);
+            if (dxWorld !== 0 || dyWorld !== 0) moveCamState.moved = true;
+
+            moveCamState.cel.offsetX = moveCamState.startOffsetX + dxWorld;
+            moveCamState.cel.offsetY = moveCamState.startOffsetY + dyWorld;
+            renderStage();
+          }
+          return;
+        }
+
+        if (activeDrawTarget && lastWorldPt && (isRightErasing || state.tool === 'brush' || state.tool === 'eraser')) {
+          const eraseMode = isRightErasing || state.tool === 'eraser';
+          const cam = getEvaluatedCamera(state.currentFrame);
+          const worldPt = stageToWorld(stagePt, cam);
+          const cctx = activeDrawTarget.canvas.getContext('2d');
+          cctx.imageSmoothingEnabled = false;
+
+          if (activeDrawIsMouth) {
+            const mouthEval = getActiveMouthState();
+            const p1 = worldToVisemeLocal(lastWorldPt, mouthEval);
+            const p2 = worldToVisemeLocal(worldPt, mouthEval);
+            drawPixelLine(cctx, p1, p2, state.brushSize, state.brushColor, eraseMode);
+            updateMouthWidget();
+          } else {
+            drawPixelLine(
+              cctx,
+              { x: lastWorldPt.x - activeDrawTarget.offsetX, y: lastWorldPt.y - activeDrawTarget.offsetY },
+              { x: worldPt.x - activeDrawTarget.offsetX, y: worldPt.y - activeDrawTarget.offsetY },
+              state.brushSize,
+              state.brushColor,
+              eraseMode
+            );
+            activeDrawTarget.hasInk = true;
+          }
+          lastWorldPt = worldPt;
+          renderStage();
+        }
+      });
+
+      stage.addEventListener('pointerup', () => {
+        if (!isPointerDown) return;
+        isPointerDown = false;
+        isRightErasing = false;
+
+        if (moveCamState && moveCamState.mode === 'moveFrame' && !moveCamState.moved) {
+          moveCamState.cel.undoStack.pop();
+        }
+
+        lastWorldPt = null;
+        activeDrawTarget = null;
+        activeDrawIsMouth = false;
+        moveCamState = null;
+        renderStage();
+      });
+
+      stage.addEventListener('pointerleave', () => {
+        hoverStagePt = null;
+        if (!isPointerDown) renderStage();
+      });
+
+      // Image Drag & Drop
+      function drawImageFittedOnLayer(targetLayerObj, img, fileName) {
+        ensureLayerCoversFrame(targetLayerObj);
+        pushPixelUndo(targetLayerObj);
+        const cctx = targetLayerObj.canvas.getContext('2d');
+        cctx.imageSmoothingEnabled = false;
+
+        let dw = img.width;
+        let dh = img.height;
+        if (dw > WORLD_W || dh > WORLD_H) {
+          const scale = Math.min(WORLD_W / dw, WORLD_H / dh);
+          dw = Math.round(dw * scale);
+          dh = Math.round(dh * scale);
+        }
+        const dx = Math.round((WORLD_W - dw) / 2) - targetLayerObj.offsetX;
+        const dy = Math.round((WORLD_H - dh) / 2) - targetLayerObj.offsetY;
+
+        cctx.drawImage(img, dx, dy, dw, dh);
+        targetLayerObj.hasInk = true;
+        if (fileName) targetLayerObj.name = fileName;
+      }
+
+      function loadImageFile(file, destination, targetFrame = state.currentFrame) {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          if (destination === 'bg') {
+            state.bgLayer.visible = true;
+            if (!state.showBgTrack) toggleBgTrack(true);
+            drawImageFittedOnLayer(state.bgLayer, img, file.name);
+            updateBgUI();
+          } else {
+            goToFrame(targetFrame);
+            const { cel } = ensureCelAt(targetFrame, false);
+            drawImageFittedOnLayer(cel, img, file.name);
+            renderTimeline();
+          }
+          renderStage();
+          URL.revokeObjectURL(url);
+        };
+        img.src = url;
+      }
+
+      // Track Height & Active Layer Management
+      function updateTimelinePanelHeight() {
+        let extra = 0;
+        if (state.showMouthTrack) extra += 38;
+        if (state.showBgTrack) extra += 36;
+        if (state.showAudioTrack) extra += 42;
+        if (state.showCamTrack) extra += 36;
+        timelinePanel.style.height = `${144 + extra}px`;
+      }
+
+      function toggleBgTrack(forceState) {
+        state.showBgTrack = typeof forceState === 'boolean' ? forceState : !state.showBgTrack;
+        const btn = document.getElementById('btnToggleBgTrack');
+        btn.textContent = `BG: ${state.showBgTrack ? 'On' : 'Off'}`;
+        btn.classList.toggle('active', state.showBgTrack);
+        bgTrackLabel.classList.toggle('hidden-track', !state.showBgTrack);
+        bgTrackRow.classList.toggle('hidden-track', !state.showBgTrack);
+        if (state.showBgTrack) state.bgLayer.visible = true;
+        if (!state.showBgTrack && state.activeLayer === 'bg') setActiveLayer('cel');
+        updateBgUI();
+        updateTimelinePanelHeight();
+        requestAnimationFrame(() => {
+          resizeStageCanvas();
+          renderAudioTrack();
+        });
+      }
+
+      function setActiveLayer(layer) {
+        state.activeLayer = layer;
+        state.selectedTrack = layer;
+        audioClipBox.classList.remove('selected');
+        celTrackLabel.classList.toggle('active-draw-layer', layer === 'cel');
+        bgTrackLabel.classList.toggle('active-draw-layer', layer === 'bg');
+        mouthTrackLabel.classList.toggle('active-draw-layer', layer === 'mouth');
+        updateMouthWidget();
+        updateStageBadge();
+        renderStage();
+      }
+
+      function updateBgUI() {
+        document.getElementById('btnVisBg').style.opacity = state.bgLayer.visible ? '1' : '0.35';
+        if (state.bgLayer.hasInk) {
+          bgSpanBar.textContent = state.bgLayer.name ? `BG: ${state.bgLayer.name}` : 'BG Artwork (Active)';
+        } else {
+          bgSpanBar.textContent = 'Background Layer (Drop image here or click to draw)';
+        }
+      }
+
+      document.getElementById('btnToggleBgTrack').onclick = () => toggleBgTrack();
+      celTrackLabel.querySelector('.track-tag').onclick = () => setActiveLayer('cel');
+      bgTrackLabel.querySelector('.track-tag').onclick = () => setActiveLayer('bg');
+      bgTrackRow.onclick = () => setActiveLayer('bg');
+
+      document.getElementById('btnVisBg').onclick = (e) => {
+        e.stopPropagation();
+        state.bgLayer.visible = !state.bgLayer.visible;
+        updateBgUI();
+        renderStage();
+      };
+
+      document.getElementById('btnClearBg').onclick = (e) => {
+        e.stopPropagation();
+        pushPixelUndo(state.bgLayer);
+        state.bgLayer.canvas = createCelCanvas();
+        state.bgLayer.offsetX = 0;
+        state.bgLayer.offsetY = 0;
+        state.bgLayer.hasInk = false;
+        state.bgLayer.name = '';
+        updateBgUI();
+        renderStage();
+      };
+
+      const bgFileInput = document.getElementById('bgFileInput');
+      document.getElementById('btnAddBgImg').onclick = (e) => {
+        e.stopPropagation();
+        bgFileInput.click();
+      };
+      bgFileInput.onchange = (e) => {
+        if (e.target.files[0]) loadImageFile(e.target.files[0], 'bg');
+        bgFileInput.value = '';
+      };
+
+      // ==========================================
+      // Web Audio Track + Live Mic Waveform Preview + Delete
+      // ==========================================
+      let audioCtx = null;
+      let activeAudioSources = [];
+      let activeScrubSource = null;
+      let lastScrubTime = 0;
+
+      let micRecorder = null;
+      let micStream = null;
+      let micChunks = [];
+      let micStartFrame = 0;
+      let micAnalyser = null;
+      let micSourceNode = null;
+      let micPreviewRaf = null;
+      let micStartTimestamp = 0;
+      let micLivePeaks = [];
+
+      function getAudioContext() {
+        if (!audioCtx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          audioCtx = new AC();
+        }
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        return audioCtx;
+      }
+
+      function stopAllAudioPlayback() {
+        for (const src of activeAudioSources) {
+          try { src.stop(); } catch (_) {}
+          try { src.disconnect(); } catch (_) {}
+        }
+        activeAudioSources = [];
+      }
+
+      function scheduleAudioAtFrame(frame) {
+        stopAllAudioPlayback();
+        if (!state.audio || state.audio.muted) return;
+
+        const ac = getAudioContext();
+        const { buffer, timelineStartSec, trimStartSec, trimEndSec } = state.audio;
+        const playheadSec = frame / state.fps;
+        const clipDur = trimEndSec - trimStartSec;
+        const clipStart = timelineStartSec;
+        const clipEnd = timelineStartSec + clipDur;
+
+        if (playheadSec >= clipEnd) return;
+
+        const src = ac.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ac.destination);
+
+        if (playheadSec >= clipStart) {
+          const intoClip = playheadSec - clipStart;
+          const remaining = clipEnd - playheadSec;
+          src.start(ac.currentTime, trimStartSec + intoClip, remaining);
+        } else {
+          const delay = clipStart - playheadSec;
+          src.start(ac.currentTime + delay, trimStartSec, clipDur);
+        }
+        activeAudioSources.push(src);
+      }
+
+      function playAudioScrubGrain(frame) {
+        if (!state.audio || state.audio.muted) return;
+        const now = performance.now();
+        if (now - lastScrubTime < 55) return;
+        lastScrubTime = now;
+
+        const ac = getAudioContext();
+        const { buffer, timelineStartSec, trimStartSec, trimEndSec } = state.audio;
+        const playheadSec = frame / state.fps;
+        const clipEnd = timelineStartSec + (trimEndSec - trimStartSec);
+
+        if (playheadSec < timelineStartSec || playheadSec >= clipEnd) return;
+        if (activeScrubSource) {
+          try { activeScrubSource.stop(); } catch (_) {}
+        }
+
+        const offset = trimStartSec + (playheadSec - timelineStartSec);
+        const grainDur = Math.min(0.06, trimEndSec - offset);
+        if (grainDur <= 0.005) return;
+
+        const src = ac.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ac.destination);
+        src.start(ac.currentTime, offset, grainDur);
+        activeScrubSource = src;
+      }
+
+      function computePeaks(audioBuffer, numBuckets = 1800) {
+        const ch = audioBuffer.getChannelData(0);
+        const step = Math.max(1, Math.floor(ch.length / numBuckets));
+        const count = Math.ceil(ch.length / step);
+        const peaks = new Float32Array(count);
+        for (let i = 0; i < count; i++) {
+          let max = 0;
+          const start = i * step;
+          const end = Math.min(ch.length, start + step);
+          for (let j = start; j < end; j++) {
+            const v = Math.abs(ch[j]);
+            if (v > max) max = v;
+          }
+          peaks[i] = max;
+        }
+        return peaks;
+      }
+
+      function toggleAudioTrack(forceState) {
+        state.showAudioTrack = typeof forceState === 'boolean' ? forceState : !state.showAudioTrack;
+        const btn = document.getElementById('btnToggleAudioTrack');
+        btn.textContent = `Audio: ${state.showAudioTrack ? 'On' : 'Off'}`;
+        btn.classList.toggle('active', state.showAudioTrack);
+        audioTrackLabel.classList.toggle('hidden-track', !state.showAudioTrack);
+        audioTrackRow.classList.toggle('hidden-track', !state.showAudioTrack);
+        updateTimelinePanelHeight();
+        requestAnimationFrame(() => {
+          resizeStageCanvas();
+          renderAudioTrack();
+        });
+      }
+
+      document.getElementById('btnToggleAudioTrack').onclick = () => toggleAudioTrack();
+
+      async function setDecodedAudioBuffer(decoded, name, startFrame = 0) {
+        const peaks = computePeaks(decoded);
+        state.audio = {
+          buffer: decoded,
+          peaks,
+          name,
+          timelineStartSec: Math.max(0, startFrame) / state.fps,
+          trimStartSec: 0,
+          trimEndSec: decoded.duration,
+          muted: false
+        };
+
+        document.getElementById('btnFitAudio').style.display = 'inline-flex';
+        document.getElementById('btnClearAudio').style.display = 'inline-flex';
+        document.getElementById('btnMuteAudio').textContent = '🔊';
+        if (!state.showAudioTrack) toggleAudioTrack(true);
+        else renderAudioTrack();
+      }
+
+      async function loadAudioFile(file) {
+        if (!file) return;
+        const ac = getAudioContext();
+        const buf = await file.arrayBuffer();
+        const decoded = await ac.decodeAudioData(buf);
+        await setDecodedAudioBuffer(decoded, file.name, 0);
+      }
+
+      function deleteActiveAudio() {
+        stopAllAudioPlayback();
+        state.audio = null;
+        if (state.selectedTrack === 'audio') state.selectedTrack = 'cel';
+        audioClipBox.classList.remove('selected');
+        document.getElementById('btnFitAudio').style.display = 'none';
+        document.getElementById('btnClearAudio').style.display = 'none';
+        renderAudioTrack();
+      }
+
+      // Live Mic Waveform Preview Loop
+      function startLiveRecPreview(stream) {
+        const ac = getAudioContext();
+        micSourceNode = ac.createMediaStreamSource(stream);
+        micAnalyser = ac.createAnalyser();
+        micAnalyser.fftSize = 256;
+        micSourceNode.connect(micAnalyser);
+
+        const timeData = new Uint8Array(micAnalyser.fftSize);
+        micLivePeaks = [];
+        micStartTimestamp = performance.now();
+        audioEmptyHint.style.display = 'none';
+        audioClipBox.style.display = 'none';
+        audioRecBadge.style.display = 'block';
+
+        const drawLive = () => {
+          if (!micRecorder || micRecorder.state !== 'recording') return;
+          micAnalyser.getByteTimeDomainData(timeData);
+          let peak = 0;
+          for (let i = 0; i < timeData.length; i++) {
+            const v = Math.abs(timeData[i] - 128) / 128;
+            if (v > peak) peak = v;
+          }
+          micLivePeaks.push(Math.min(1, peak * 2.2));
+          if (micLivePeaks.length > 300) micLivePeaks.shift();
+
+          const elapsed = ((performance.now() - micStartTimestamp) / 1000).toFixed(1);
+          audioRecBadge.textContent = `● REC ${elapsed}s`;
+
+          const w = audioTrackRow.clientWidth;
+          const h = audioTrackRow.clientHeight;
+          if (w > 0 && h > 0) {
+            audioWaveCanvas.width = w;
+            audioWaveCanvas.height = h;
+            const actx = audioWaveCanvas.getContext('2d');
+            actx.clearRect(0, 0, w, h);
+
+            const midY = h / 2;
+            const maxAmp = (h - 10) / 2;
+            const barStep = 4;
+            const totalBars = Math.floor(w / barStep);
+            const startIdx = Math.max(0, micLivePeaks.length - totalBars);
+
+            actx.fillStyle = '#ef4444';
+            for (let b = 0; b < micLivePeaks.length - startIdx; b++) {
+              const amp = Math.max(2, micLivePeaks[startIdx + b] * maxAmp);
+              const px = w - (micLivePeaks.length - startIdx - b) * barStep;
+              actx.fillRect(px, Math.round(midY - amp), 2, Math.round(amp * 2));
+            }
+          }
+          micPreviewRaf = requestAnimationFrame(drawLive);
+        };
+        micPreviewRaf = requestAnimationFrame(drawLive);
+      }
+
+      function stopLiveRecPreview() {
+        if (micPreviewRaf) {
+          cancelAnimationFrame(micPreviewRaf);
+          micPreviewRaf = null;
+        }
+        if (micSourceNode) {
+          try { micSourceNode.disconnect(); } catch (_) {}
+          micSourceNode = null;
+        }
+        micAnalyser = null;
+        audioRecBadge.style.display = 'none';
+      }
+
+      // Mic Recording directly into Audio Track
+      const btnRecAudio = document.getElementById('btnRecAudio');
+      btnRecAudio.onclick = async () => {
+        if (micRecorder && micRecorder.state === 'recording') {
+          micRecorder.stop();
+          return;
+        }
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          alert('Microphone recording is not supported in this browser.');
+          return;
+        }
+
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          micChunks = [];
+          micStartFrame = state.currentFrame;
+
+          micRecorder = new MediaRecorder(micStream);
+          micRecorder.ondataavailable = (ev) => {
+            if (ev.data.size > 0) micChunks.push(ev.data);
+          };
+
+          micRecorder.onstop = async () => {
+            stopLiveRecPreview();
+            btnRecAudio.textContent = '● Rec';
+            btnRecAudio.classList.remove('recording');
+
+            if (micStream) {
+              micStream.getTracks().forEach(t => t.stop());
+              micStream = null;
+            }
+
+            if (micChunks.length > 0) {
+              const blob = new Blob(micChunks, { type: micRecorder.mimeType || 'audio/webm' });
+              const ac = getAudioContext();
+              const buf = await blob.arrayBuffer();
+              const decoded = await ac.decodeAudioData(buf);
+              await setDecodedAudioBuffer(decoded, 'Mic Recording', micStartFrame);
+            } else {
+              renderAudioTrack();
+            }
+            micRecorder = null;
+          };
+
+          micRecorder.start();
+          btnRecAudio.textContent = '■ Stop';
+          btnRecAudio.classList.add('recording');
+          startLiveRecPreview(micStream);
+        } catch (err) {
+          alert('Could not access microphone: ' + (err && err.message ? err.message : err));
+        }
+      };
+
+      function renderAudioTrack() {
+        if (!state.showAudioTrack) return;
+        if (micRecorder && micRecorder.state === 'recording') return;
+        const w = audioTrackRow.clientWidth;
+        const h = audioTrackRow.clientHeight;
+        if (w <= 0 || h <= 0) return;
+
+        audioWaveCanvas.width = w;
+        audioWaveCanvas.height = h;
+        const actx = audioWaveCanvas.getContext('2d');
+        actx.clearRect(0, 0, w, h);
+
+        if (!state.audio) {
+          audioEmptyHint.style.display = 'flex';
+          audioClipBox.style.display = 'none';
+          return;
+        }
+
+        audioEmptyHint.style.display = 'none';
+        audioClipBox.style.display = 'block';
+
+        const { buffer, peaks, name, timelineStartSec, trimStartSec, trimEndSec, muted } = state.audio;
+        const timelineDurSec = state.totalFrames / state.fps;
+        const clipDur = trimEndSec - trimStartSec;
+
+        const leftPct = (timelineStartSec / timelineDurSec) * 100;
+        const widthPct = (clipDur / timelineDurSec) * 100;
+        audioClipBox.style.left = `${leftPct}%`;
+        audioClipBox.style.width = `${widthPct}%`;
+        audioClipBox.style.opacity = muted ? '0.4' : '1';
+        audioClipBox.classList.toggle('selected', state.selectedTrack === 'audio');
+
+        const startFrameNum = Math.round(timelineStartSec * state.fps) + 1;
+        audioClipLabel.textContent = `${name} (F${startFrameNum} • ${clipDur.toFixed(2)}s)`;
+
+        const clipX0 = (timelineStartSec / timelineDurSec) * w;
+        const clipX1 = ((timelineStartSec + clipDur) / timelineDurSec) * w;
+        const drawStartX = Math.max(0, Math.floor(clipX0));
+        const drawEndX = Math.min(w, Math.ceil(clipX1));
+
+        actx.fillStyle = muted ? 'rgba(192, 132, 252, 0.35)' : '#c084fc';
+        const midY = h / 2;
+        const maxAmp = (h - 12) / 2;
+
+        for (let px = drawStartX; px < drawEndX; px++) {
+          const tOnTimeline = (px / w) * timelineDurSec;
+          const tInAudio = trimStartSec + (tOnTimeline - timelineStartSec);
+          const norm = tInAudio / buffer.duration;
+          const idx = Math.max(0, Math.min(peaks.length - 1, Math.floor(norm * peaks.length)));
+          const amp = Math.max(1, peaks[idx] * maxAmp);
+          actx.fillRect(px, Math.round(midY - amp), 1, Math.round(amp * 2));
+        }
+      }
+
+      // Audio Right-Click Context Menu
+      audioTrackRow.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (!state.audio) return;
+        state.selectedTrack = 'audio';
+        audioClipBox.classList.add('selected');
+
+        document.getElementById('ctxAudioMute').textContent = state.audio.muted ? '🔊 Unmute Audio' : '🔇 Mute Audio';
+        audioContextMenu.style.display = 'flex';
+        const left = Math.min(window.innerWidth - 175, e.clientX);
+        const top = Math.min(window.innerHeight - 105, e.clientY);
+        audioContextMenu.style.left = `${left}px`;
+        audioContextMenu.style.top = `${top}px`;
+      });
+
+      document.getElementById('ctxAudioDelete').onclick = () => {
+        deleteActiveAudio();
+        hideMenus();
+      };
+      document.getElementById('ctxAudioMute').onclick = () => {
+        document.getElementById('btnMuteAudio').click();
+        hideMenus();
+      };
+      document.getElementById('ctxAudioFit').onclick = () => {
+        document.getElementById('btnFitAudio').click();
+        hideMenus();
+      };
+
+      // Unified File Drag & Drop
+      window.addEventListener('dragover', (e) => {
+        if (draggingSceneId) return;
+        e.preventDefault();
+        if (app.mode !== 'editor') return;
+        if (bgTrackRow.contains(e.target) || bgTrackLabel.contains(e.target)) {
+          bgTrackRow.classList.add('drop-active');
+          stageContainer.classList.remove('drop-active');
+          audioTrackRow.classList.remove('drop-active');
+        } else if (audioTrackRow.contains(e.target) || audioTrackLabel.contains(e.target)) {
+          audioTrackRow.classList.add('drop-active');
+          stageContainer.classList.remove('drop-active');
+          bgTrackRow.classList.remove('drop-active');
+        } else {
+          stageContainer.classList.add('drop-active');
+          audioTrackRow.classList.remove('drop-active');
+          bgTrackRow.classList.remove('drop-active');
+        }
+      });
+
+      window.addEventListener('dragleave', (e) => {
+        if (e.relatedTarget === null) {
+          stageContainer.classList.remove('drop-active');
+          audioTrackRow.classList.remove('drop-active');
+          bgTrackRow.classList.remove('drop-active');
+        }
+      });
+
+      window.addEventListener('drop', (e) => {
+        if (draggingSceneId) return;
+        e.preventDefault();
+        stageContainer.classList.remove('drop-active');
+        audioTrackRow.classList.remove('drop-active');
+        bgTrackRow.classList.remove('drop-active');
+        if (app.mode !== 'editor') return;
+
+        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (!file) return;
+
+        if (file.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac|webm)$/i.test(file.name)) {
+          loadAudioFile(file);
+          return;
+        }
+
+        if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name)) {
+          if (bgTrackRow.contains(e.target) || bgTrackLabel.contains(e.target) || (state.activeLayer === 'bg' && stageContainer.contains(e.target))) {
+            loadImageFile(file, 'bg');
+          } else if (celTrackRow.contains(e.target)) {
+            const targetFrame = frameFromClientX(e.clientX);
+            loadImageFile(file, 'cel', targetFrame);
+          } else {
+            loadImageFile(file, 'cel', state.currentFrame);
+          }
+        }
+      });
+
+      const audioFileInput = document.getElementById('audioFileInput');
+      document.getElementById('btnAddAudio').onclick = () => audioFileInput.click();
+      audioFileInput.onchange = (e) => {
+        if (e.target.files[0]) loadAudioFile(e.target.files[0]);
+        audioFileInput.value = '';
+      };
+
+      document.getElementById('btnMuteAudio').onclick = (e) => {
+        if (!state.audio) return;
+        state.audio.muted = !state.audio.muted;
+        e.target.textContent = state.audio.muted ? '🔇' : '🔊';
+        if (state.audio.muted) stopAllAudioPlayback();
+        else if (state.isPlaying) scheduleAudioAtFrame(state.currentFrame);
+        renderAudioTrack();
+      };
+
+      document.getElementById('btnClearAudio').onclick = deleteActiveAudio;
+
+      document.getElementById('btnFitAudio').onclick = () => {
+        if (!state.audio) return;
+        const neededEndSec = Math.max(1, state.audio.timelineStartSec + (state.audio.trimEndSec - state.audio.trimStartSec));
+        state.totalFrames = Math.max(12, Math.ceil(neededEndSec * state.fps));
+        renderTimeline();
+      };
+
+      let audioDragState = null;
+
+      audioClipBox.addEventListener('pointerdown', (e) => {
+        if (!state.audio) return;
+        e.stopPropagation();
+        state.selectedTrack = 'audio';
+        audioClipBox.classList.add('selected');
+        if (e.button === 2) return;
+        if (state.isPlaying) togglePlay();
+
+        const trimRole = e.target.dataset && e.target.dataset.trim;
+        audioClipBox.setPointerCapture(e.pointerId);
+        audioDragState = {
+          mode: trimRole || 'move',
+          startX: e.clientX,
+          origTimelineStart: state.audio.timelineStartSec,
+          origTrimStart: state.audio.trimStartSec,
+          origTrimEnd: state.audio.trimEndSec
+        };
+      });
+
+      audioClipBox.addEventListener('pointermove', (e) => {
+        if (!audioDragState || !state.audio) return;
+        const trackW = Math.max(1, audioTrackRow.clientWidth);
+        const timelineDurSec = state.totalFrames / state.fps;
+        const deltaSec = ((e.clientX - audioDragState.startX) / trackW) * timelineDurSec;
+        const frameSec = 1 / state.fps;
+
+        if (audioDragState.mode === 'move') {
+          const rawFrame = Math.round((audioDragState.origTimelineStart + deltaSec) * state.fps);
+          const snappedFrame = Math.max(0, Math.min(state.totalFrames - 1, rawFrame));
+          state.audio.timelineStartSec = snappedFrame / state.fps;
+        } else if (audioDragState.mode === 'left') {
+          const origEndSecOnTimeline = audioDragState.origTimelineStart + (audioDragState.origTrimEnd - audioDragState.origTrimStart);
+          const minPossibleStartSec = Math.max(0, audioDragState.origTimelineStart - audioDragState.origTrimStart);
+          const maxPossibleStartSec = origEndSecOnTimeline - frameSec;
+
+          const rawStartSec = audioDragState.origTimelineStart + deltaSec;
+          const snappedFrame = Math.round(rawStartSec * state.fps);
+          const clampedStartSec = Math.max(minPossibleStartSec, Math.min(maxPossibleStartSec, snappedFrame / state.fps));
+          const finalStartSec = Math.max(0, Math.round(clampedStartSec * state.fps) / state.fps);
+          const actualDelta = finalStartSec - audioDragState.origTimelineStart;
+
+          if (audioDragState.origTrimStart + actualDelta >= 0 && audioDragState.origTrimStart + actualDelta <= audioDragState.origTrimEnd - frameSec * 0.5) {
+            state.audio.timelineStartSec = finalStartSec;
+            state.audio.trimStartSec = audioDragState.origTrimStart + actualDelta;
+          }
+        } else if (audioDragState.mode === 'right') {
+          const origDur = audioDragState.origTrimEnd - audioDragState.origTrimStart;
+          const rawEndOnTimeline = audioDragState.origTimelineStart + origDur + deltaSec;
+          const startFrame = Math.round(audioDragState.origTimelineStart * state.fps);
+          const snappedEndFrame = Math.max(startFrame + 1, Math.round(rawEndOnTimeline * state.fps));
+          const snappedDur = (snappedEndFrame / state.fps) - audioDragState.origTimelineStart;
+          const newTrimEnd = Math.min(state.audio.buffer.duration, audioDragState.origTrimStart + snappedDur);
+          state.audio.trimEndSec = Math.max(audioDragState.origTrimStart + frameSec * 0.5, newTrimEnd);
+        }
+        renderAudioTrack();
+      });
+
+      audioClipBox.addEventListener('pointerup', () => { audioDragState = null; });
+      audioClipBox.addEventListener('pointercancel', () => { audioDragState = null; });
+
+      window.addEventListener('resize', () => {
+        if (app.mode === 'editor') renderAudioTrack();
+        else renderScenesPreview();
+      });
+
+      // Timeline Horizontal Zoom & Auto-Extend
+      function applyTimelineZoom(newZoom, anchorClientX = null) {
+        state.timelineZoom = Math.max(1, Math.min(10, newZoom));
+        const scrollRect = timelineScroll.getBoundingClientRect();
+
+        let anchorRatio = 0;
+        let pointerOffsetInScroll = 0;
+        if (anchorClientX !== null && scrollRect.width > 0) {
+          pointerOffsetInScroll = anchorClientX - scrollRect.left;
+          const oldGridW = Math.max(1, timelineGrid.clientWidth);
+          anchorRatio = (timelineScroll.scrollLeft + pointerOffsetInScroll) / oldGridW;
+        }
+
+        timelineGrid.style.width = `${state.timelineZoom * 100}%`;
+
+        if (anchorClientX !== null) {
+          const newGridW = timelineScroll.clientWidth * state.timelineZoom;
+          timelineScroll.scrollLeft = Math.max(0, anchorRatio * newGridW - pointerOffsetInScroll);
+        } else if (state.timelineZoom === 1) {
+          timelineScroll.scrollLeft = 0;
+        }
+
+        if (state.timelineZoom > 1.01) {
+          btnResetTimelineZoom.style.display = 'inline-flex';
+          btnResetTimelineZoom.textContent = `Zoom: ${state.timelineZoom.toFixed(1)}x ✕`;
+        } else {
+          btnResetTimelineZoom.style.display = 'none';
+        }
+        renderAudioTrack();
+      }
+
+      timelineScroll.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+          timelineScroll.scrollLeft += (e.deltaX !== 0 ? e.deltaX : e.deltaY);
+          return;
+        }
+        const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+        applyTimelineZoom(state.timelineZoom * factor, e.clientX);
+      }, { passive: false });
+
+      let tlPanStart = null;
+      timelineScroll.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
+      timelineScroll.addEventListener('pointerdown', (e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          timelineScroll.setPointerCapture(e.pointerId);
+          tlPanStart = { x: e.clientX, left: timelineScroll.scrollLeft };
+        }
+      });
+      timelineScroll.addEventListener('pointermove', (e) => {
+        if (!tlPanStart) return;
+        timelineScroll.scrollLeft = tlPanStart.left - (e.clientX - tlPanStart.x);
+      });
+      timelineScroll.addEventListener('pointerup', (e) => {
+        if (e.button === 1) tlPanStart = null;
+      });
+
+      btnResetTimelineZoom.onclick = () => applyTimelineZoom(1);
+
+      function addFrameAndAdvance() {
+        state.totalFrames += 1;
+        renderTimeline();
+        goToFrame(state.totalFrames - 1);
+      }
+
+      document.getElementById('btnAddFrame').onclick = addFrameAndAdvance;
+
+      function ensurePlayheadVisibleInTimeline() {
+        if (state.timelineZoom <= 1.01) return;
+        const gridW = timelineGrid.clientWidth;
+        const viewW = timelineScroll.clientWidth;
+        const frameX = ((state.currentFrame + 0.5) / state.totalFrames) * gridW;
+        if (frameX < timelineScroll.scrollLeft + 24) {
+          timelineScroll.scrollLeft = Math.max(0, frameX - 24);
+        } else if (frameX > timelineScroll.scrollLeft + viewW - 24) {
+          timelineScroll.scrollLeft = frameX - viewW + 24;
+        }
+      }
+
+      function renderTimeline() {
+        rulerRow.innerHTML = '';
+        celTrackRow.innerHTML = '';
+        mouthTrackRow.innerHTML = '';
+        camTrackRow.innerHTML = '';
+
+        const sortedCamKeys = Array.from(state.cameraKeys.keys()).sort((a, b) => a - b);
+        const firstCam = sortedCamKeys[0];
+        const lastCam = sortedCamKeys[sortedCamKeys.length - 1];
+        const effectiveColsPerScreen = state.totalFrames / state.timelineZoom;
+        const labelStep = effectiveColsPerScreen > 48 ? 5 : effectiveColsPerScreen > 30 ? 2 : 1;
+
+        for (let f = 0; f < state.totalFrames; f++) {
+          const rCell = document.createElement('div');
+          rCell.className = 'ruler-cell' + (f === state.currentFrame ? ' active' : '');
+          if (f === 0 || (f + 1) % labelStep === 0 || f === state.currentFrame) {
+            rCell.textContent = f + 1;
+          }
+          rulerRow.appendChild(rCell);
+
+          const mCell = document.createElement('div');
+          mCell.className = 'frame-cell' + (f === state.currentFrame ? ' current-col' : '');
+          mouthTrackRow.appendChild(mCell);
+
+          const cCell = document.createElement('div');
+          cCell.className = 'frame-cell' + (f === state.currentFrame ? ' current-col' : '');
+          celTrackRow.appendChild(cCell);
+
+          const camCell = document.createElement('div');
+          camCell.className = 'frame-cell' + (f === state.currentFrame ? ' current-col' : '');
+          if (sortedCamKeys.length >= 2 && f >= firstCam && f <= lastCam) {
+            const bar = document.createElement('div');
+            bar.className = 'cam-bar';
+            if (f === firstCam) bar.style.left = '50%';
+            if (f === lastCam) bar.style.right = '50%';
+            camCell.appendChild(bar);
+          }
+          if (state.cameraKeys.has(f)) {
+            const diamond = document.createElement('div');
+            diamond.className = 'cam-diamond';
+            camCell.appendChild(diamond);
+          }
+          camTrackRow.appendChild(camCell);
+        }
+
+        // Mouth Viseme Key Pills
+        for (const [f, mk] of state.mouthLayer.keys.entries()) {
+          if (f >= state.totalFrames) continue;
+          const pill = document.createElement('div');
+          pill.className = 'mouth-key-pill';
+          pill.style.left = `calc(${(f / state.totalFrames) * 100}% + 1px)`;
+          pill.style.width = `calc(${(1 / state.totalFrames) * 100}% - 2px)`;
+          pill.textContent = VISEME_NAMES[mk.viseme] || 'M';
+          mouthTrackRow.appendChild(pill);
+        }
+
+        for (const [start, cel] of state.cels.entries()) {
+          if (start >= state.totalFrames) continue;
+          const visibleDur = Math.min(cel.duration, state.totalFrames - start);
+          const spanBar = document.createElement('div');
+          spanBar.className = 'cel-span-bar';
+          spanBar.style.left = `calc(${(start / state.totalFrames) * 100}% + 2px)`;
+          spanBar.style.width = `calc(${(visibleDur / state.totalFrames) * 100}% - 4px)`;
+          spanBar.title = `Frame ${start + 1} (Hold: ${cel.duration}f) — Drag to stretch, Right-click for options`;
+
+          const dot = document.createElement('div');
+          dot.className = 'cel-span-dot' + (cel.hasInk ? '' : ' blank');
+          spanBar.appendChild(dot);
+
+          const grip = document.createElement('div');
+          grip.className = 'cel-span-grip';
+          spanBar.appendChild(grip);
+
+          celTrackRow.appendChild(spanBar);
+        }
+
+        updateLoopRangeUI();
+        updatePlayheadUI();
+        renderAudioTrack();
+      }
+
+      function updatePlayheadUI() {
+        const rCells = rulerRow.children;
+        const mCells = mouthTrackRow.children;
+        const cCells = celTrackRow.children;
+        const kCells = camTrackRow.children;
+        const effectiveColsPerScreen = state.totalFrames / state.timelineZoom;
+        const labelStep = effectiveColsPerScreen > 48 ? 5 : effectiveColsPerScreen > 30 ? 2 : 1;
+
+        for (let f = 0; f < state.totalFrames; f++) {
+          const isCurr = f === state.currentFrame;
+          if (rCells[f]) {
+            rCells[f].classList.toggle('active', isCurr);
+            rCells[f].textContent = (f === 0 || (f + 1) % labelStep === 0 || isCurr) ? (f + 1) : '';
+          }
+          if (mCells[f] && mCells[f].classList.contains('frame-cell')) {
+            mCells[f].classList.toggle('current-col', isCurr);
+          }
+          if (cCells[f] && cCells[f].classList.contains('frame-cell')) {
+            cCells[f].classList.toggle('current-col', isCurr);
+          }
+          if (kCells[f]) kCells[f].classList.toggle('current-col', isCurr);
+        }
+
+        playheadLine.style.left = `${((state.currentFrame + 0.5) / state.totalFrames) * 100}%`;
+        frameIndicator.textContent = `F ${state.currentFrame + 1} / ${state.totalFrames}`;
+        updateStageBadge();
+        ensurePlayheadVisibleInTimeline();
+      }
+
+      function updateLoopRangeUI() {
+        if (!state.loopRange) {
+          loopSelectionBar.style.display = 'none';
+          loopHighlightOverlay.style.display = 'none';
+          loopRangeBadge.textContent = 'Loop: All';
+          return;
+        }
+        const { start, end } = state.loopRange;
+        const leftPct = (start / state.totalFrames) * 100;
+        const widthPct = ((end - start + 1) / state.totalFrames) * 100;
+
+        loopSelectionBar.style.display = 'block';
+        loopSelectionBar.style.left = `${leftPct}%`;
+        loopSelectionBar.style.width = `${widthPct}%`;
+
+        loopHighlightOverlay.style.display = 'block';
+        loopHighlightOverlay.style.left = `${leftPct}%`;
+        loopHighlightOverlay.style.width = `${widthPct}%`;
+
+        loopRangeBadge.textContent = `Loop: F ${start + 1}–${end + 1}`;
+      }
+
+      function updateStageBadge() {
+        const cam = getEvaluatedCamera(state.currentFrame);
+        let toolLabel = state.tool.toUpperCase();
+        if (state.tool === 'moveCam') toolLabel = 'MOVE / CAM';
+        else if (state.tool === 'brush' || state.tool === 'eraser') toolLabel = `${toolLabel} (${state.brushSize}px)`;
+
+        const viewPct = Math.round(state.viewZoom * 100);
+        let layerTag = '';
+        if (state.activeLayer === 'bg') layerTag = ' | [BG]';
+        else if (state.activeLayer === 'mouth') layerTag = ' | [MOUTH]';
+
+        const camTxt = cam.scale !== 100 ? ` | Cam ${Math.round(cam.scale)}%` : '';
+        stageBadge.textContent = `${toolLabel}${layerTag} | F${state.currentFrame + 1} | ${WORLD_W}×${WORLD_H} | View ${viewPct}%${camTxt}`;
+      }
+
+      function frameFromClientX(clientX) {
+        const rect = timelineGrid.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(0.99999, (clientX - rect.left) / rect.width));
+        return Math.floor(ratio * state.totalFrames);
+      }
+
+      let loopDragAnchor = null;
+
+      loopRow.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        loopDragAnchor = frameFromClientX(e.clientX);
+        state.loopRange = { start: loopDragAnchor, end: loopDragAnchor };
+        loopRow.setPointerCapture(e.pointerId);
+        updateLoopRangeUI();
+      });
+
+      loopRow.addEventListener('pointermove', (e) => {
+        if (loopDragAnchor === null) return;
+        const curr = frameFromClientX(e.clientX);
+        state.loopRange = {
+          start: Math.min(loopDragAnchor, curr),
+          end: Math.max(loopDragAnchor, curr)
+        };
+        updateLoopRangeUI();
+      });
+
+      loopRow.addEventListener('pointerup', () => { loopDragAnchor = null; });
+      loopRow.addEventListener('dblclick', () => {
+        state.loopRange = null;
+        updateLoopRangeUI();
+      });
+
+      document.getElementById('btnClearLoopRange').onclick = () => {
+        state.loopRange = null;
+        updateLoopRangeUI();
+      };
+
+      let isScrubbing = false;
+      let rulerLoopAnchor = null;
+
+      rulerRow.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        if (state.isPlaying) togglePlay();
+        rulerRow.setPointerCapture(e.pointerId);
+        const f = frameFromClientX(e.clientX);
+        if (e.shiftKey) {
+          rulerLoopAnchor = f;
+          state.loopRange = { start: f, end: f };
+          updateLoopRangeUI();
+        } else {
+          isScrubbing = true;
+          goToFrame(f);
+          playAudioScrubGrain(f);
+        }
+      });
+
+      rulerRow.addEventListener('pointermove', (e) => {
+        const f = frameFromClientX(e.clientX);
+        if (rulerLoopAnchor !== null) {
+          state.loopRange = {
+            start: Math.min(rulerLoopAnchor, f),
+            end: Math.max(rulerLoopAnchor, f)
+          };
+          updateLoopRangeUI();
+        } else if (isScrubbing && f !== state.currentFrame) {
+          goToFrame(f);
+          playAudioScrubGrain(f);
+        }
+      });
+
+      rulerRow.addEventListener('pointerup', () => { isScrubbing = false; rulerLoopAnchor = null; });
+      rulerRow.addEventListener('pointercancel', () => { isScrubbing = false; rulerLoopAnchor = null; });
+
+      let stretchState = null;
+
+      celTrackRow.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        setActiveLayer('cel');
+        if (state.isPlaying) togglePlay();
+        const clickFrame = frameFromClientX(e.clientX);
+        goToFrame(clickFrame);
+
+        const entry = getCelEntryAt(clickFrame);
+        if (!entry) return;
+
+        celTrackRow.setPointerCapture(e.pointerId);
+        const origCels = [];
+        for (const s of getSortedCelStarts()) {
+          const c = state.cels.get(s);
+          origCels.push({ start: s, cel: c, duration: c.duration });
+        }
+
+        stretchState = {
+          targetStart: entry.start,
+          origTotalFrames: state.totalFrames,
+          origCels,
+          lastTargetFrame: clickFrame
+        };
+      });
+
+      celTrackRow.addEventListener('pointermove', (e) => {
+        if (!stretchState) return;
+        const rect = timelineGrid.getBoundingClientRect();
+        let dragFrame = Math.floor(((e.clientX - rect.left) / rect.width) * state.totalFrames);
+        dragFrame = Math.max(stretchState.targetStart, dragFrame);
+        if (dragFrame === stretchState.lastTargetFrame) return;
+        stretchState.lastTargetFrame = dragFrame;
+
+        const { targetStart, origCels, origTotalFrames } = stretchState;
+        const newDur = Math.max(1, dragFrame - targetStart + 1);
+
+        const nextOrig = origCels.find(item => item.start > targetStart);
+        let pushShift = 0;
+        if (nextOrig) {
+          const neededNextStart = targetStart + newDur;
+          if (neededNextStart > nextOrig.start) {
+            pushShift = neededNextStart - nextOrig.start;
+          }
+        }
+
+        state.cels.clear();
+        let maxEnd = origTotalFrames;
+        for (const item of origCels) {
+          if (item.start < targetStart) {
+            item.cel.duration = item.duration;
+            state.cels.set(item.start, item.cel);
+          } else if (item.start === targetStart) {
+            item.cel.duration = newDur;
+            state.cels.set(item.start, item.cel);
+            maxEnd = Math.max(maxEnd, item.start + newDur);
+          } else {
+            const newStart = item.start + pushShift;
+            item.cel.duration = item.duration;
+            state.cels.set(newStart, item.cel);
+            maxEnd = Math.max(maxEnd, newStart + item.duration);
+          }
+        }
+
+        state.totalFrames = Math.max(origTotalFrames, maxEnd);
+        state.currentFrame = Math.min(state.totalFrames - 1, dragFrame);
+        renderTimeline();
+        renderStage();
+      });
+
+      celTrackRow.addEventListener('pointerup', () => { stretchState = null; });
+      celTrackRow.addEventListener('pointercancel', () => { stretchState = null; });
+
+      // Right-click Context Menu on Frame
+      let contextTargetFrame = 0;
+
+      celTrackRow.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (state.isPlaying) togglePlay();
+        setActiveLayer('cel');
+        contextTargetFrame = frameFromClientX(e.clientX);
+        goToFrame(contextTargetFrame);
+
+        const hasEntry = Boolean(getCelEntryAt(contextTargetFrame));
+        document.getElementById('ctxDelete').disabled = !hasEntry;
+        document.getElementById('ctxClear').disabled = !hasEntry;
+
+        celContextMenu.style.display = 'flex';
+        const menuW = 165;
+        const menuH = 130;
+        const left = Math.min(window.innerWidth - menuW - 6, e.clientX);
+        const top = Math.min(window.innerHeight - menuH - 6, e.clientY);
+        celContextMenu.style.left = `${left}px`;
+        celContextMenu.style.top = `${top}px`;
+      });
+
+      function hideMenus() {
+        celContextMenu.style.display = 'none';
+        audioContextMenu.style.display = 'none';
+        exportMenu.classList.remove('open');
+        sizeMenu.classList.remove('open');
+      }
+
+      window.addEventListener('pointerdown', (e) => {
+        if (!celContextMenu.contains(e.target)) celContextMenu.style.display = 'none';
+        if (!audioContextMenu.contains(e.target)) audioContextMenu.style.display = 'none';
+        if (!exportWrap.contains(e.target)) exportMenu.classList.remove('open');
+        if (!sizeWrap.contains(e.target)) sizeMenu.classList.remove('open');
+      });
+
+      function deleteCelAtFrame(frame) {
+        const entry = getCelEntryAt(frame);
+        if (!entry) return;
+        state.cels.delete(entry.start);
+        renderTimeline();
+        renderStage();
+      }
+
+      document.getElementById('ctxDelete').onclick = () => {
+        deleteCelAtFrame(contextTargetFrame);
+        hideMenus();
+      };
+      document.getElementById('ctxBlank').onclick = () => {
+        splitOrCreateBlankAt(contextTargetFrame, false);
+        hideMenus();
+      };
+      document.getElementById('ctxDup').onclick = () => {
+        splitOrCreateBlankAt(contextTargetFrame, true);
+        hideMenus();
+      };
+      document.getElementById('ctxClear').onclick = () => {
+        const entry = getCelEntryAt(contextTargetFrame);
+        if (entry) {
+          pushPixelUndo(entry.cel);
+          entry.cel.canvas.getContext('2d').clearRect(0, 0, entry.cel.canvas.width, entry.cel.canvas.height);
+          entry.cel.hasInk = false;
+          renderTimeline();
+          renderStage();
+        }
+        hideMenus();
+      };
+
+      camTrackRow.addEventListener('pointerdown', (e) => {
+        if (state.isPlaying) togglePlay();
+        goToFrame(frameFromClientX(e.clientX));
+      });
+
+      function syncInspectorUI() {
+        const cam = getEvaluatedCamera(state.currentFrame);
+        camEase.value = cam.ease;
+        camScale.value = Math.round(cam.scale);
+        camX.value = Math.round(cam.x);
+        camY.value = Math.round(cam.y);
+
+        document.getElementById('camScaleVal').textContent = camScale.value + '%';
+        document.getElementById('camXVal').textContent = camX.value;
+        document.getElementById('camYVal').textContent = camY.value;
+        updateStageBadge();
+      }
+
+      function goToFrame(f) {
+        state.currentFrame = Math.max(0, Math.min(state.totalFrames - 1, f));
+        syncInspectorUI();
+        updatePlayheadUI();
+        updateMouthWidget();
+        renderStage();
+      }
+
+      function stepForwardOrExtend() {
+        if (state.isPlaying) return;
+        if (state.currentFrame + 1 >= state.totalFrames) {
+          addFrameAndAdvance();
+        } else {
+          goToFrame(state.currentFrame + 1);
+        }
+      }
+
+      function setCameraKeyframeFromUI(frame = state.currentFrame) {
+        state.cameraKeys.set(frame, {
+          ease: camEase.value,
+          scale: Number(camScale.value),
+          x: Number(camX.value),
+          y: Number(camY.value)
+        });
+      }
+
+      [camEase, camScale, camX, camY].forEach(el => {
+        el.addEventListener('input', () => {
+          setCameraKeyframeFromUI(state.currentFrame);
+          syncInspectorUI();
+          renderTimeline();
+          renderStage();
+        });
+      });
+
+      document.getElementById('btnSetCamKey').onclick = () => {
+        setCameraKeyframeFromUI(state.currentFrame);
+        syncInspectorUI();
+        renderTimeline();
+        renderStage();
+      };
+
+      document.getElementById('btnDelCamKey').onclick = () => {
+        state.cameraKeys.delete(state.currentFrame);
+        syncInspectorUI();
+        renderTimeline();
+        renderStage();
+      };
+
+      document.getElementById('btnResetCam').onclick = () => {
+        camScale.value = 100;
+        camX.value = 0;
+        camY.value = 0;
+        if (state.cameraKeys.size > 0) setCameraKeyframeFromUI(state.currentFrame);
+        syncInspectorUI();
+        renderTimeline();
+        renderStage();
+      };
+
+      function selectTool(toolName) {
+        state.tool = toolName;
+        document.querySelectorAll('[data-tool]').forEach(b => {
+          b.classList.toggle('active', b.dataset.tool === toolName);
+        });
+        stage.style.cursor = toolName === 'moveCam' ? 'move' : 'crosshair';
+        updateMouthWidget();
+        updateStageBadge();
+        renderStage();
+      }
+
+      document.querySelectorAll('[data-tool]').forEach(btn => {
+        btn.onclick = () => selectTool(btn.dataset.tool);
+      });
+
+      const brushColor = document.getElementById('brushColor');
+      const brushSizeInput = document.getElementById('brushSize');
+      const brushSizeVal = document.getElementById('brushSizeVal');
+
+      function setBrushSize(val) {
+        state.brushSize = Math.max(1, Math.min(32, val));
+        brushSizeInput.value = state.brushSize;
+        brushSizeVal.textContent = state.brushSize + 'px';
+        updateStageBadge();
+        renderStage();
+      }
+
+      brushColor.oninput = () => state.brushColor = brushColor.value;
+      brushSizeInput.oninput = () => setBrushSize(Number(brushSizeInput.value));
+
+      document.querySelectorAll('.swatch').forEach(sw => {
+        sw.onclick = () => {
+          state.brushColor = sw.dataset.color;
+          brushColor.value = sw.dataset.color;
+        };
+      });
+
+      function undoActiveLayer() {
+        let layerObj = null;
+        if (state.activeLayer === 'bg') layerObj = state.bgLayer;
+        else if (state.activeLayer === 'mouth') {
+          const m = getActiveMouthState();
+          layerObj = state.mouthLayer.visemes[m.viseme];
+        } else {
+          const e = getCelEntryAt(state.currentFrame);
+          layerObj = e ? e.cel : null;
+        }
+        if (!layerObj || layerObj.undoStack.length === 0) return;
+
+        const entry = layerObj.undoStack.pop();
+        if (entry.type === 'move') {
+          layerObj.offsetX = entry.offsetX;
+          layerObj.offsetY = entry.offsetY;
+        } else if (entry.type === 'pixels') {
+          if (layerObj.canvas.width !== entry.w || layerObj.canvas.height !== entry.h) {
+            layerObj.canvas.width = entry.w;
+            layerObj.canvas.height = entry.h;
+          }
+          const cctx = layerObj.canvas.getContext('2d');
+          cctx.imageSmoothingEnabled = false;
+          cctx.putImageData(entry.imgData, 0, 0);
+          if (layerObj.offsetX !== undefined) {
+            layerObj.offsetX = entry.offsetX;
+            layerObj.offsetY = entry.offsetY;
+          }
+        }
+        updateMouthWidget();
+        renderStage();
+      }
+
+      function splitOrCreateBlankAt(frame, clonePrev) {
+        const existing = getCelEntryAt(frame);
+        if (existing) {
+          if (existing.start === frame) {
+            pushPixelUndo(existing.cel);
+            existing.cel.canvas = createCelCanvas();
+            existing.cel.offsetX = 0;
+            existing.cel.offsetY = 0;
+            if (clonePrev) {
+              const prev = getPrevCelBefore(frame);
+              if (prev) {
+                existing.cel.canvas = createCelCanvas(prev.cel.canvas.width, prev.cel.canvas.height);
+                existing.cel.canvas.getContext('2d').drawImage(prev.cel.canvas, 0, 0);
+                existing.cel.offsetX = prev.cel.offsetX;
+                existing.cel.offsetY = prev.cel.offsetY;
+                existing.cel.hasInk = prev.cel.hasInk;
+              } else {
+                existing.cel.hasInk = false;
+              }
+            } else {
+              existing.cel.hasInk = false;
+            }
+          } else {
+            const oldDur = existing.cel.duration;
+            const leftDur = frame - existing.start;
+            const rightDur = oldDur - leftDur;
+            existing.cel.duration = leftDur;
+
+            let canvas = createCelCanvas();
+            let offsetX = 0;
+            let offsetY = 0;
+            let hasInk = false;
+            if (clonePrev) {
+              canvas = createCelCanvas(existing.cel.canvas.width, existing.cel.canvas.height);
+              canvas.getContext('2d').drawImage(existing.cel.canvas, 0, 0);
+              offsetX = existing.cel.offsetX;
+              offsetY = existing.cel.offsetY;
+              hasInk = existing.cel.hasInk;
+            }
+            state.cels.set(frame, { canvas, undoStack: [], hasInk, duration: rightDur, offsetX, offsetY });
+          }
+        } else {
+          ensureCelAt(frame, clonePrev);
+        }
+        renderTimeline();
+        renderStage();
+      }
+
+      // Editor Playback Loop
+      let lastTick = 0;
+
+      function getPlaybackBounds() {
+        if (state.loopRange) {
+          return {
+            minF: Math.max(0, state.loopRange.start),
+            maxF: Math.min(state.totalFrames - 1, state.loopRange.end)
+          };
+        }
+        return { minF: 0, maxF: state.totalFrames - 1 };
+      }
+
+      function togglePlay() {
+        state.isPlaying = !state.isPlaying;
+        const btn = document.getElementById('btnPlay');
+        btn.textContent = state.isPlaying ? '⏸ Pause' : '▶ Play';
+
+        if (state.isPlaying) {
+          const { minF, maxF } = getPlaybackBounds();
+          if (state.currentFrame < minF || state.currentFrame > maxF) {
+            goToFrame(minF);
+          }
+          scheduleAudioAtFrame(state.currentFrame);
+          lastTick = performance.now();
+          requestAnimationFrame(playStep);
+        } else {
+          stopAllAudioPlayback();
+          renderStage();
+        }
+      }
+
+      function playStep(now) {
+        if (!state.isPlaying) return;
+        const interval = 1000 / state.fps;
+        if (now - lastTick >= interval) {
+          lastTick = now - ((now - lastTick) % interval);
+          const { minF, maxF } = getPlaybackBounds();
+          if (state.currentFrame + 1 > maxF) {
+            if (state.loop) {
+              goToFrame(minF);
+              scheduleAudioAtFrame(minF);
+            } else {
+              togglePlay();
+              return;
+            }
+          } else {
+            goToFrame(state.currentFrame + 1);
+          }
+        }
+        requestAnimationFrame(playStep);
+      }
+
+      document.getElementById('btnPlay').onclick = togglePlay;
+      document.getElementById('btnRewind').onclick = () => {
+        if (state.isPlaying) togglePlay();
+        goToFrame(getPlaybackBounds().minF);
+      };
+      document.getElementById('btnPrevFrame').onclick = () => goToFrame(state.currentFrame - 1);
+      document.getElementById('btnNextFrame').onclick = stepForwardOrExtend;
+
+      document.getElementById('btnLoop').onclick = (e) => {
+        state.loop = !state.loop;
+        e.target.textContent = `Loop: ${state.loop ? 'On' : 'Off'}`;
+        e.target.classList.toggle('active', state.loop);
+      };
+
+      document.getElementById('fpsSelect').onchange = (e) => {
+        state.fps = Number(e.target.value);
+        renderAudioTrack();
+        if (state.isPlaying) scheduleAudioAtFrame(state.currentFrame);
+      };
+
+      const btnOnion = document.getElementById('btnOnion');
+      const btnOnionBefore = document.getElementById('btnOnionBefore');
+      const btnOnionAfter = document.getElementById('btnOnionAfter');
+
+      btnOnion.onclick = () => {
+        state.onionSkin = !state.onionSkin;
+        btnOnion.textContent = `Onion: ${state.onionSkin ? 'On' : 'Off'}`;
+        btnOnion.classList.toggle('active', state.onionSkin);
+        renderStage();
+      };
+
+      btnOnionBefore.onclick = () => {
+        state.onionBefore = !state.onionBefore;
+        btnOnionBefore.classList.toggle('active', state.onionBefore);
+        renderStage();
+      };
+
+      btnOnionAfter.onclick = () => {
+        state.onionAfter = !state.onionAfter;
+        btnOnionAfter.classList.toggle('active', state.onionAfter);
+        renderStage();
+      };
+
+      document.getElementById('btnToggleCamTrack').onclick = (e) => {
+        state.showCamTrack = !state.showCamTrack;
+        e.target.textContent = `CamTrack: ${state.showCamTrack ? 'On' : 'Off'}`;
+        e.target.classList.toggle('active', state.showCamTrack);
+        camTrackLabel.classList.toggle('hidden-track', !state.showCamTrack);
+        camTrackRow.classList.toggle('hidden-track', !state.showCamTrack);
+        updateTimelinePanelHeight();
+        requestAnimationFrame(() => {
+          resizeStageCanvas();
+          renderAudioTrack();
+        });
+      };
+
+      document.getElementById('btnVisCel').onclick = (e) => {
+        e.stopPropagation();
+        state.showCelLayer = !state.showCelLayer;
+        e.target.style.opacity = state.showCelLayer ? '1' : '0.35';
+        renderStage();
+      };
+      document.getElementById('btnVisCam').onclick = (e) => {
+        e.stopPropagation();
+        state.applyCamera = !state.applyCamera;
+        e.target.style.opacity = state.applyCamera ? '1' : '0.35';
+        syncInspectorUI();
+        renderStage();
+      };
+
+      // ==========================================
+      // SCENES / STORYBOARD PAGE LOGIC
+      // ==========================================
+      function getTotalMovieFrames() {
+        return app.scenes.reduce((sum, sc) => sum + sc.totalFrames, 0);
+      }
+
+      function resolveGlobalFrame(gFrame) {
+        let acc = 0;
+        for (let i = 0; i < app.scenes.length; i++) {
+          const sc = app.scenes[i];
+          if (gFrame < acc + sc.totalFrames) {
+            return { sceneIndex: i, scene: sc, localFrame: gFrame - acc };
+          }
+          acc += sc.totalFrames;
+        }
+        const last = app.scenes[app.scenes.length - 1];
+        return { sceneIndex: app.scenes.length - 1, scene: last, localFrame: last.totalFrames - 1 };
+      }
+
+      function renderScenesPreview() {
+        const total = Math.max(1, getTotalMovieFrames());
+        app.scenesGlobalFrame = Math.max(0, Math.min(total - 1, app.scenesGlobalFrame));
+
+        const previewW = 640;
+        const previewH = Math.round(640 * (WORLD_H / WORLD_W));
+        if (scenesPreviewCanvas.width !== previewW || scenesPreviewCanvas.height !== previewH) {
+          scenesPreviewCanvas.width = previewW;
+          scenesPreviewCanvas.height = previewH;
+        }
+
+        const { scene, localFrame } = resolveGlobalFrame(app.scenesGlobalFrame);
+        renderSceneToContext(scene, spCtx, previewW, previewH, localFrame, true, false);
+        scenesFrameReadout.textContent = `${scene.name} • F ${app.scenesGlobalFrame + 1} / ${total}`;
+
+        const playhead = scenesScrubber.querySelector('.scenes-scrub-playhead');
+        if (playhead) {
+          playhead.style.left = `${((app.scenesGlobalFrame + 0.5) / total) * 100}%`;
+        }
+
+        const cards = scenesGrid.children;
+        for (let i = 0; i < app.scenes.length; i++) {
+          if (cards[i]) {
+            cards[i].classList.toggle('playing-now', app.scenesPlaying && app.scenes[i].id === scene.id);
+          }
+        }
+      }
+
+      function renderScenesScrubber() {
+        const total = Math.max(1, getTotalMovieFrames());
+        scenesScrubber.innerHTML = '';
+        for (const sc of app.scenes) {
+          const seg = document.createElement('div');
+          seg.className = 'scenes-scrub-seg';
+          seg.style.width = `${(sc.totalFrames / total) * 100}%`;
+          seg.title = `${sc.name} (${sc.totalFrames}f)`;
+          scenesScrubber.appendChild(seg);
+        }
+        const ph = document.createElement('div');
+        ph.className = 'scenes-scrub-playhead';
+        scenesScrubber.appendChild(ph);
+      }
+
+      let isScrubbingScenes = false;
+      function scrubScenesFromEvent(e) {
+        const rect = scenesScrubber.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(0.99999, (e.clientX - rect.left) / Math.max(1, rect.width)));
+        app.scenesGlobalFrame = Math.floor(ratio * getTotalMovieFrames());
+        renderScenesPreview();
+      }
+
+      scenesScrubber.addEventListener('pointerdown', (e) => {
+        if (app.scenesPlaying) toggleScenesPlay();
+        isScrubbingScenes = true;
+        scenesScrubber.setPointerCapture(e.pointerId);
+        scrubScenesFromEvent(e);
+      });
+      scenesScrubber.addEventListener('pointermove', (e) => {
+        if (isScrubbingScenes) scrubScenesFromEvent(e);
+      });
+      scenesScrubber.addEventListener('pointerup', () => { isScrubbingScenes = false; });
+
+      function scheduleMultiSceneAudio(startGlobalFrame, targetAc, destinationNode) {
+        const ac = targetAc || getAudioContext();
+        const dest = destinationNode || ac.destination;
+        const startSec = startGlobalFrame / app.fps;
+        const scheduled = [];
+        let accFrames = 0;
+
+        for (const sc of app.scenes) {
+          const sceneStartSec = accFrames / app.fps;
+          const sceneEndSec = (accFrames + sc.totalFrames) / app.fps;
+          accFrames += sc.totalFrames;
+
+          if (!sc.audio || sc.audio.muted) continue;
+
+          const clipDur = sc.audio.trimEndSec - sc.audio.trimStartSec;
+          const clipGlobalStart = sceneStartSec + sc.audio.timelineStartSec;
+          const clipGlobalEnd = Math.min(sceneEndSec, clipGlobalStart + clipDur);
+
+          if (startSec >= clipGlobalEnd || clipGlobalEnd <= clipGlobalStart) continue;
+
+          const src = ac.createBufferSource();
+          src.buffer = sc.audio.buffer;
+          src.connect(dest);
+
+          if (startSec >= clipGlobalStart) {
+            const intoClip = startSec - clipGlobalStart;
+            const remaining = clipGlobalEnd - startSec;
+            src.start(ac.currentTime, sc.audio.trimStartSec + intoClip, remaining);
+          } else {
+            const delay = clipGlobalStart - startSec;
+            src.start(ac.currentTime + delay, sc.audio.trimStartSec, clipGlobalEnd - clipGlobalStart);
+          }
+          scheduled.push(src);
+        }
+        return scheduled;
+      }
+
+      let scenesLastTick = 0;
+
+      function toggleScenesPlay() {
+        app.scenesPlaying = !app.scenesPlaying;
+        btnScenesPlay.textContent = app.scenesPlaying ? '⏸ Pause' : '▶ Play All';
+
+        if (app.scenesPlaying) {
+          const total = getTotalMovieFrames();
+          if (app.scenesGlobalFrame >= total) app.scenesGlobalFrame = 0;
+          stopAllAudioPlayback();
+          activeAudioSources = scheduleMultiSceneAudio(app.scenesGlobalFrame);
+          scenesLastTick = performance.now();
+          requestAnimationFrame(scenesPlayStep);
+        } else {
+          stopAllAudioPlayback();
+          renderScenesPreview();
+        }
+      }
+
+      function scenesPlayStep(now) {
+        if (!app.scenesPlaying) return;
+        const interval = 1000 / app.fps;
+        if (now - scenesLastTick >= interval) {
+          scenesLastTick = now - ((now - scenesLastTick) % interval);
+          const total = getTotalMovieFrames();
+          if (app.scenesGlobalFrame + 1 >= total) {
+            if (app.loop) {
+              app.scenesGlobalFrame = 0;
+              stopAllAudioPlayback();
+              activeAudioSources = scheduleMultiSceneAudio(0);
+            } else {
+              toggleScenesPlay();
+              return;
+            }
+          } else {
+            app.scenesGlobalFrame += 1;
+          }
+          renderScenesPreview();
+        }
+        requestAnimationFrame(scenesPlayStep);
+      }
+
+      btnScenesPlay.onclick = toggleScenesPlay;
+      document.getElementById('btnScenesRewind').onclick = () => {
+        if (app.scenesPlaying) toggleScenesPlay();
+        app.scenesGlobalFrame = 0;
+        renderScenesPreview();
+      };
+      btnScenesLoop.onclick = (e) => {
+        app.loop = !app.loop;
+        e.target.textContent = `Loop: ${app.loop ? 'On' : 'Off'}`;
+        e.target.classList.toggle('active', app.loop);
+        document.getElementById('btnLoop').textContent = `Loop: ${app.loop ? 'On' : 'Off'}`;
+        document.getElementById('btnLoop').classList.toggle('active', app.loop);
+      };
+
+      let draggingSceneId = null;
+
+      function duplicateSceneObj(src) {
+        const copy = makeScene(src.name + ' Copy');
+        copy.totalFrames = src.totalFrames;
+        copy.loopRange = src.loopRange ? { ...src.loopRange } : null;
+        copy.cels.clear();
+        for (const [f, cel] of src.cels.entries()) {
+          const c = createCelCanvas(cel.canvas.width, cel.canvas.height);
+          c.getContext('2d').drawImage(cel.canvas, 0, 0);
+          copy.cels.set(f, {
+            canvas: c,
+            undoStack: [],
+            hasInk: cel.hasInk,
+            duration: cel.duration,
+            offsetX: cel.offsetX,
+            offsetY: cel.offsetY
+          });
+        }
+        const bgC = createCelCanvas(src.bgLayer.canvas.width, src.bgLayer.canvas.height);
+        bgC.getContext('2d').drawImage(src.bgLayer.canvas, 0, 0);
+        copy.bgLayer = {
+          canvas: bgC,
+          undoStack: [],
+          hasInk: src.bgLayer.hasInk,
+          visible: src.bgLayer.visible,
+          name: src.bgLayer.name,
+          offsetX: src.bgLayer.offsetX,
+          offsetY: src.bgLayer.offsetY
+        };
+        copy.mouthLayer = {
+          visible: src.mouthLayer.visible,
+          keys: new Map(Array.from(src.mouthLayer.keys.entries()).map(([k, v]) => [k, { ...v }])),
+          visemes: src.mouthLayer.visemes.map(v => {
+            const vc = createCelCanvas(MOUTH_W, MOUTH_H);
+            vc.getContext('2d').drawImage(v.canvas, 0, 0);
+            return { name: v.name, canvas: vc, undoStack: [] };
+          })
+        };
+        copy.cameraKeys = new Map(Array.from(src.cameraKeys.entries()).map(([k, v]) => [k, { ...v }]));
+        copy.audio = src.audio ? { ...src.audio } : null;
+        return copy;
+      }
+
+      function renderScenesGrid() {
+        scenesGrid.innerHTML = '';
+        const thumbW = 320;
+        const thumbH = Math.round(320 * (WORLD_H / WORLD_W));
+
+        app.scenes.forEach((sc, idx) => {
+          const card = document.createElement('div');
+          card.className = 'scene-card' + (sc.id === app.activeSceneId ? ' selected' : '');
+          card.draggable = true;
+
+          const thumbBox = document.createElement('div');
+          thumbBox.className = 'scene-thumb-box';
+          const thumbCanvas = document.createElement('canvas');
+          thumbCanvas.width = thumbW;
+          thumbCanvas.height = thumbH;
+          renderSceneToContext(sc, thumbCanvas.getContext('2d'), thumbW, thumbH, 0, true, false);
+          thumbBox.appendChild(thumbCanvas);
+
+          const badge = document.createElement('div');
+          badge.className = 'scene-num-badge';
+          badge.textContent = `#${idx + 1}`;
+          thumbBox.appendChild(badge);
+          card.appendChild(thumbBox);
+
+          const meta = document.createElement('div');
+          meta.className = 'scene-meta';
+
+          const titleRow = document.createElement('div');
+          titleRow.className = 'scene-title-row';
+          const nameInput = document.createElement('input');
+          nameInput.className = 'scene-name-input';
+          nameInput.value = sc.name;
+          nameInput.onclick = (e) => e.stopPropagation();
+          nameInput.onchange = () => {
+            sc.name = nameInput.value.trim() || `Scene ${idx + 1}`;
+            if (sc.id === app.activeSceneId) activeSceneLabel.textContent = sc.name;
+            renderScenesPreview();
+          };
+          titleRow.appendChild(nameInput);
+          meta.appendChild(titleRow);
+
+          const actRow = document.createElement('div');
+          actRow.className = 'scene-actions-row';
+
+          const info = document.createElement('span');
+          info.className = 'scene-info-txt';
+          const secStr = (sc.totalFrames / app.fps).toFixed(1);
+          info.textContent = `${sc.totalFrames}f (${secStr}s)` + (sc.audio ? ' • 🔊' : '');
+          actRow.appendChild(info);
+
+          const btns = document.createElement('div');
+          btns.style.display = 'flex';
+          btns.style.gap = '3px';
+
+          const btnEdit = document.createElement('button');
+          btnEdit.className = 'mini-btn';
+          btnEdit.textContent = 'Edit';
+          btnEdit.onclick = (e) => {
+            e.stopPropagation();
+            selectSceneForEditor(sc.id, true);
+          };
+
+          const btnDup = document.createElement('button');
+          btnDup.className = 'mini-btn';
+          btnDup.textContent = 'Dup';
+          btnDup.title = 'Duplicate Scene';
+          btnDup.onclick = (e) => {
+            e.stopPropagation();
+            const copy = duplicateSceneObj(sc);
+            app.scenes.splice(idx + 1, 0, copy);
+            renderScenesView();
+          };
+
+          const btnDel = document.createElement('button');
+          btnDel.className = 'mini-btn danger';
+          btnDel.textContent = '✕';
+          btnDel.title = 'Delete Scene';
+          btnDel.onclick = (e) => {
+            e.stopPropagation();
+            if (app.scenes.length <= 1) return;
+            app.scenes.splice(idx, 1);
+            if (app.activeSceneId === sc.id) {
+              app.activeSceneId = app.scenes[Math.max(0, idx - 1)].id;
+              activeSceneLabel.textContent = activeScene().name;
+            }
+            renderScenesView();
+          };
+
+          btns.append(btnEdit, btnDup, btnDel);
+          actRow.appendChild(btns);
+          meta.appendChild(actRow);
+          card.appendChild(meta);
+
+          card.onclick = () => selectSceneForEditor(sc.id, false);
+          card.ondblclick = () => selectSceneForEditor(sc.id, true);
+
+          card.addEventListener('dragstart', (e) => {
+            draggingSceneId = sc.id;
+            card.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', sc.id);
+          });
+
+          card.addEventListener('dragover', (e) => {
+            if (!draggingSceneId || draggingSceneId === sc.id) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            card.classList.add('drag-over');
+          });
+
+          card.addEventListener('dragleave', () => {
+            card.classList.remove('drag-over');
+          });
+
+          card.addEventListener('drop', (e) => {
+            if (!draggingSceneId || draggingSceneId === sc.id) return;
+            e.preventDefault();
+            e.stopPropagation();
+            card.classList.remove('drag-over');
+
+            const fromIdx = app.scenes.findIndex(s => s.id === draggingSceneId);
+            const toIdx = app.scenes.findIndex(s => s.id === sc.id);
+            if (fromIdx >= 0 && toIdx >= 0) {
+              const [moved] = app.scenes.splice(fromIdx, 1);
+              app.scenes.splice(toIdx, 0, moved);
+              renderScenesView();
+            }
+          });
+
+          card.addEventListener('dragend', () => {
+            draggingSceneId = null;
+            card.classList.remove('dragging');
+            scenesGrid.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+          });
+
+          scenesGrid.appendChild(card);
+        });
+      }
+
+      function renderScenesView() {
+        scenesBoard.style.setProperty('--scene-card-w', `${app.scenesBoardZoomPx}px`);
+        renderScenesScrubber();
+        renderScenesGrid();
+        renderScenesPreview();
+      }
+
+      document.getElementById('btnNewScene').onclick = () => {
+        const nextNum = app.scenes.length + 1;
+        const sc = makeScene(`Scene ${nextNum}`);
+        app.scenes.push(sc);
+        app.activeSceneId = sc.id;
+        activeSceneLabel.textContent = sc.name;
+        renderScenesView();
+      };
+
+      scenesZoomSlider.oninput = () => {
+        app.scenesBoardZoomPx = Number(scenesZoomSlider.value);
+        scenesBoard.style.setProperty('--scene-card-w', `${app.scenesBoardZoomPx}px`);
+      };
+
+      scenesBoard.addEventListener('wheel', (e) => {
+        if (e.ctrlKey || !e.shiftKey) {
+          e.preventDefault();
+          const step = e.deltaY < 0 ? 18 : -18;
+          app.scenesBoardZoomPx = Math.max(90, Math.min(380, app.scenesBoardZoomPx + step));
+          scenesZoomSlider.value = app.scenesBoardZoomPx;
+          scenesBoard.style.setProperty('--scene-card-w', `${app.scenesBoardZoomPx}px`);
+        }
+      }, { passive: false });
+
+      // Keyboard Shortcuts
+      window.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+        if (e.code === 'Escape') {
+          hideMenus();
+          toggleCameraPanel(false);
+          mouthSheetPop.classList.remove('open');
+          return;
+        }
+        if (e.code === 'Space') {
+          e.preventDefault();
+          if (app.mode === 'scenes') toggleScenesPlay();
+          else togglePlay();
+          return;
+        }
+
+        if (app.mode !== 'editor') return;
+
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+          e.preventDefault();
+          undoActiveLayer();
+        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          if (state.selectedTrack === 'audio' && state.audio) {
+            deleteActiveAudio();
+          } else if (state.selectedTrack === 'mouth') {
+            if (state.mouthLayer.keys.size > 1) {
+              state.mouthLayer.keys.delete(state.currentFrame);
+              updateMouthWidget();
+              renderTimeline();
+              renderStage();
+            }
+          } else {
+            deleteCelAtFrame(state.currentFrame);
+          }
+        } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'b') {
+          selectTool('brush');
+        } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'e') {
+          selectTool('eraser');
+        } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'f') {
+          selectTool('fill');
+        } else if (e.key === '[' || e.code === 'BracketLeft') {
+          e.preventDefault();
+          setBrushSize(state.brushSize - 1);
+        } else if (e.key === ']' || e.code === 'BracketRight') {
+          e.preventDefault();
+          setBrushSize(state.brushSize + 1);
+        } else if (e.key === 'ArrowRight' || e.key === '.') {
+          stepForwardOrExtend();
+        } else if (e.key === 'ArrowLeft' || e.key === ',') {
+          goToFrame(state.currentFrame - 1);
+        } else if (e.key.toLowerCase() === 'o') {
+          btnOnion.click();
+        }
+      });
+
+      // ==========================================
+      // Save / Load Project JSON (Includes Mouth Visemes & Scenes)
+      // ==========================================
+      function serializeScene(sc) {
+        const celsArr = [];
+        for (const [frame, cel] of sc.cels.entries()) {
+          celsArr.push({
+            frame,
+            duration: cel.duration,
+            hasInk: cel.hasInk,
+            offsetX: cel.offsetX,
+            offsetY: cel.offsetY,
+            width: cel.canvas.width,
+            height: cel.canvas.height,
+            dataUrl: cel.canvas.toDataURL('image/png')
+          });
+        }
+        return {
+          id: sc.id,
+          name: sc.name,
+          totalFrames: sc.totalFrames,
+          loopRange: sc.loopRange,
+          cels: celsArr,
+          cameraKeys: Array.from(sc.cameraKeys.entries()),
+          bgLayer: {
+            hasInk: sc.bgLayer.hasInk,
+            visible: sc.bgLayer.visible,
+            name: sc.bgLayer.name,
+            offsetX: sc.bgLayer.offsetX,
+            offsetY: sc.bgLayer.offsetY,
+            width: sc.bgLayer.canvas.width,
+            height: sc.bgLayer.canvas.height,
+            dataUrl: sc.bgLayer.hasInk ? sc.bgLayer.canvas.toDataURL('image/png') : null
+          },
+          mouthLayer: {
+            visible: sc.mouthLayer.visible,
+            keys: Array.from(sc.mouthLayer.keys.entries()),
+            visemes: sc.mouthLayer.visemes.map(v => ({
+              name: v.name,
+              dataUrl: v.canvas.toDataURL('image/png')
+            }))
+          }
+        };
+      }
+
+      async function deserializeScene(raw, fallbackName) {
+        const sc = makeScene(raw.name || fallbackName);
+        if (raw.id) sc.id = raw.id;
+        sc.totalFrames = raw.totalFrames || 24;
+        sc.loopRange = raw.loopRange || null;
+        sc.cels.clear();
+        sc.cameraKeys = new Map(raw.cameraKeys || []);
+
+        for (const item of raw.cels || []) {
+          const canvas = createCelCanvas(item.width || WORLD_W, item.height || WORLD_H);
+          const cel = {
+            canvas,
+            undoStack: [],
+            hasInk: Boolean(item.hasInk),
+            duration: item.duration || 1,
+            offsetX: item.offsetX || 0,
+            offsetY: item.offsetY || 0
+          };
+          await new Promise(resolve => {
+            const img = new Image();
+            img.onload = () => {
+              const cctx = canvas.getContext('2d');
+              cctx.imageSmoothingEnabled = false;
+              cctx.drawImage(img, 0, 0);
+              resolve();
+            };
+            img.src = item.dataUrl;
+          });
+          sc.cels.set(item.frame, cel);
+        }
+
+        if (raw.bgLayer && raw.bgLayer.dataUrl) {
+          sc.bgLayer.hasInk = Boolean(raw.bgLayer.hasInk);
+          sc.bgLayer.visible = Boolean(raw.bgLayer.visible);
+          sc.bgLayer.name = raw.bgLayer.name || '';
+          sc.bgLayer.offsetX = raw.bgLayer.offsetX || 0;
+          sc.bgLayer.offsetY = raw.bgLayer.offsetY || 0;
+          sc.bgLayer.canvas = createCelCanvas(raw.bgLayer.width || WORLD_W, raw.bgLayer.height || WORLD_H);
+          await new Promise(resolve => {
+            const img = new Image();
+            img.onload = () => {
+              const bctx = sc.bgLayer.canvas.getContext('2d');
+              bctx.imageSmoothingEnabled = false;
+              bctx.drawImage(img, 0, 0);
+              resolve();
+            };
+            img.src = raw.bgLayer.dataUrl;
+          });
+        }
+
+        if (raw.mouthLayer) {
+          sc.mouthLayer.visible = Boolean(raw.mouthLayer.visible);
+          sc.mouthLayer.keys = new Map(raw.mouthLayer.keys || []);
+          if (Array.isArray(raw.mouthLayer.visemes)) {
+            for (let i = 0; i < sc.mouthLayer.visemes.length && i < raw.mouthLayer.visemes.length; i++) {
+              const vData = raw.mouthLayer.visemes[i];
+              if (vData && vData.dataUrl) {
+                await new Promise(resolve => {
+                  const img = new Image();
+                  img.onload = () => {
+                    const vctx = sc.mouthLayer.visemes[i].canvas.getContext('2d');
+                    vctx.imageSmoothingEnabled = false;
+                    vctx.clearRect(0, 0, MOUTH_W, MOUTH_H);
+                    vctx.drawImage(img, 0, 0);
+                    resolve();
+                  };
+                  img.src = vData.dataUrl;
+                });
+              }
+            }
+          }
+        }
+        return sc;
+      }
+
+      document.getElementById('btnSaveJson').onclick = () => {
+        hideMenus();
+        const payload = {
+          version: 3,
+          worldW: WORLD_W,
+          worldH: WORLD_H,
+          fps: app.fps,
+          activeSceneId: app.activeSceneId,
+          scenes: app.scenes.map(serializeScene)
+        };
+        const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+        triggerDownload(blob, 'animation-project.json');
+      };
+
+      const fileInput = document.getElementById('fileInput');
+      document.getElementById('btnLoadJson').onclick = () => fileInput.click();
+      fileInput.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const data = JSON.parse(reader.result);
+          if (data.worldW && data.worldH) {
+            WORLD_W = data.worldW;
+            WORLD_H = data.worldH;
+            btnCanvasSize.textContent = `📐 ${WORLD_W}×${WORLD_H} ▾`;
+          }
+          app.fps = (data.fps === 24) ? 24 : 12;
+          document.getElementById('fpsSelect').value = app.fps;
+
+          if (Array.isArray(data.scenes) && data.scenes.length > 0) {
+            const loaded = [];
+            for (let i = 0; i < data.scenes.length; i++) {
+              loaded.push(await deserializeScene(data.scenes[i], `Scene ${i + 1}`));
+            }
+            app.scenes = loaded;
+            app.activeSceneId = loaded.some(s => s.id === data.activeSceneId) ? data.activeSceneId : loaded[0].id;
+          } else {
+            const single = await deserializeScene(data, 'Scene 1');
+            app.scenes = [single];
+            app.activeSceneId = single.id;
+          }
+
+          loadSceneIntoEditorUI(activeScene());
+          if (app.mode === 'scenes') renderScenesView();
+        };
+        reader.readAsText(file);
+        fileInput.value = '';
+      };
+
+      // ==========================================
+      // Export (PNGs, MP4, WebM)
+      // ==========================================
+      const crcTable = (() => {
+        const t = new Uint32Array(256);
+        for (let n = 0; n < 256; n++) {
+          let c = n;
+          for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+          t[n] = c >>> 0;
+        }
+        return t;
+      })();
+
+      function crc32(bytes) {
+        let c = 0xffffffff;
+        for (let i = 0; i < bytes.length; i++) {
+          c = crcTable[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+        }
+        return (c ^ 0xffffffff) >>> 0;
+      }
+
+      function buildZipBlob(files) {
+        const encoder = new TextEncoder();
+        const localParts = [];
+        const centralParts = [];
+        let offset = 0;
+
+        for (const file of files) {
+          const nameBytes = encoder.encode(file.name);
+          const data = file.data;
+          const crc = crc32(data);
+
+          const lh = new ArrayBuffer(30 + nameBytes.length);
+          const ldv = new DataView(lh);
+          ldv.setUint32(0, 0x04034b50, true);
+          ldv.setUint16(4, 20, true);
+          ldv.setUint16(6, 0, true);
+          ldv.setUint16(8, 0, true);
+          ldv.setUint16(10, 0, true);
+          ldv.setUint16(12, 0, true);
+          ldv.setUint32(14, crc, true);
+          ldv.setUint32(18, data.length, true);
+          ldv.setUint32(22, data.length, true);
+          ldv.setUint16(26, nameBytes.length, true);
+          ldv.setUint16(28, 0, true);
+          new Uint8Array(lh, 30).set(nameBytes);
+
+          localParts.push(new Uint8Array(lh), data);
+
+          const ch = new ArrayBuffer(46 + nameBytes.length);
+          const cdv = new DataView(ch);
+          cdv.setUint32(0, 0x02014b50, true);
+          cdv.setUint16(4, 20, true);
+          cdv.setUint16(6, 20, true);
+          cdv.setUint16(8, 0, true);
+          cdv.setUint16(10, 0, true);
+          cdv.setUint16(12, 0, true);
+          cdv.setUint16(14, 0, true);
+          cdv.setUint32(16, crc, true);
+          cdv.setUint32(20, data.length, true);
+          cdv.setUint32(24, data.length, true);
+          cdv.setUint16(28, nameBytes.length, true);
+          cdv.setUint16(30, 0, true);
+          cdv.setUint16(32, 0, true);
+          cdv.setUint16(34, 0, true);
+          cdv.setUint16(36, 0, true);
+          cdv.setUint32(38, 0, true);
+          cdv.setUint32(42, offset, true);
+          new Uint8Array(ch, 46).set(nameBytes);
+
+          centralParts.push(new Uint8Array(ch));
+          offset += 30 + nameBytes.length + data.length;
+        }
+
+        const cdSize = centralParts.reduce((s, p) => s + p.length, 0);
+        const eocd = new ArrayBuffer(22);
+        const edv = new DataView(eocd);
+        edv.setUint32(0, 0x06054b50, true);
+        edv.setUint16(4, 0, true);
+        edv.setUint16(6, 0, true);
+        edv.setUint16(8, files.length, true);
+        edv.setUint16(10, files.length, true);
+        edv.setUint32(12, cdSize, true);
+        edv.setUint32(16, offset, true);
+        edv.setUint16(20, 0, true);
+
+        return new Blob([...localParts, ...centralParts, new Uint8Array(eocd)], { type: 'application/zip' });
+      }
+
+      function getExportFrameSequence() {
+        if (app.mode === 'scenes') {
+          const seq = [];
+          for (const sc of app.scenes) {
+            for (let f = 0; f < sc.totalFrames; f++) {
+              seq.push({ scene: sc, frame: f });
+            }
+          }
+          return seq;
+        }
+        const { minF, maxF } = getPlaybackBounds();
+        const sc = activeScene();
+        const seq = [];
+        for (let f = minF; f <= maxF; f++) {
+          seq.push({ scene: sc, frame: f });
+        }
+        return seq;
+      }
+
+      document.getElementById('btnExportPngSeq').onclick = async () => {
+        hideMenus();
+        if (state.isPlaying) togglePlay();
+        if (app.scenesPlaying) toggleScenesPlay();
+        btnExportMenu.textContent = 'Exporting PNGs...';
+        btnExportMenu.disabled = true;
+
+        try {
+          const exportCanvas = createCelCanvas(WORLD_W, WORLD_H);
+          const ectx = exportCanvas.getContext('2d');
+          ectx.imageSmoothingEnabled = false;
+
+          const seq = getExportFrameSequence();
+          const files = [];
+
+          for (let i = 0; i < seq.length; i++) {
+            const { scene, frame } = seq[i];
+            renderSceneToContext(scene, ectx, WORLD_W, WORLD_H, frame, true, false);
+            const blob = await new Promise(resolve => exportCanvas.toBlob(resolve, 'image/png'));
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            const num = String(i + 1).padStart(4, '0');
+            files.push({ name: `frame_${num}.png`, data: bytes });
+          }
+
+          const zipBlob = buildZipBlob(files);
+          triggerDownload(zipBlob, app.mode === 'scenes' ? 'all-scenes-pngs.zip' : 'png-sequence.zip');
+        } finally {
+          btnExportMenu.textContent = 'Export ▾';
+          btnExportMenu.disabled = false;
+        }
+      };
+
+      async function exportVideo(preferredFormat) {
+        hideMenus();
+        if (state.isPlaying) togglePlay();
+        if (app.scenesPlaying) toggleScenesPlay();
+        btnExportMenu.textContent = 'Exporting...';
+        btnExportMenu.disabled = true;
+
+        try {
+          const exportCanvas = createCelCanvas(WORLD_W, WORLD_H);
+          const ectx = exportCanvas.getContext('2d');
+          ectx.imageSmoothingEnabled = false;
+          const canvasStream = exportCanvas.captureStream(app.fps);
+
+          const seq = getExportFrameSequence();
+          const tracks = [...canvasStream.getVideoTracks()];
+          let exportAudioSources = [];
+
+          const hasAnyAudio = app.mode === 'scenes'
+            ? app.scenes.some(sc => sc.audio && !sc.audio.muted)
+            : Boolean(state.audio && !state.audio.muted);
+
+          if (hasAnyAudio) {
+            const ac = getAudioContext();
+            const dest = ac.createMediaStreamDestination();
+            if (app.mode === 'scenes') {
+              exportAudioSources = scheduleMultiSceneAudio(0, ac, dest);
+            } else {
+              const { minF, maxF } = getPlaybackBounds();
+              const startSec = minF / app.fps;
+              const totalExportSec = (maxF - minF + 1) / app.fps;
+              const clipDur = state.audio.trimEndSec - state.audio.trimStartSec;
+              const clipStart = state.audio.timelineStartSec;
+              const clipEnd = clipStart + clipDur;
+
+              if (startSec < clipEnd && startSec + totalExportSec > clipStart) {
+                const src = ac.createBufferSource();
+                src.buffer = state.audio.buffer;
+                src.connect(dest);
+                if (startSec >= clipStart) {
+                  src.start(ac.currentTime, state.audio.trimStartSec + (startSec - clipStart), clipEnd - startSec);
+                } else {
+                  src.start(ac.currentTime + (clipStart - startSec), state.audio.trimStartSec, clipDur);
+                }
+                exportAudioSources.push(src);
+              }
+            }
+            tracks.push(...dest.stream.getAudioTracks());
+          }
+
+          const mp4Types = hasAnyAudio
+            ? ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1.64003E,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E,opus', 'video/mp4']
+            : ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1.64003E', 'video/mp4;codecs=avc1', 'video/mp4'];
+          const webmTypes = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+
+          let mimeType = '';
+          let ext = preferredFormat;
+
+          if (preferredFormat === 'mp4') {
+            mimeType = mp4Types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+            if (!mimeType) {
+              mimeType = webmTypes.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
+              ext = 'webm';
+              alert('Native MP4 recording is not supported by this browser; exporting as WebM instead.');
+            }
+          } else {
+            mimeType = webmTypes.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
+            ext = 'webm';
+          }
+
+          const combinedStream = new MediaStream(tracks);
+          const recorder = new MediaRecorder(combinedStream, { mimeType });
+          const chunks = [];
+
+          await new Promise(async (resolve) => {
+            recorder.ondataavailable = (ev) => { if (ev.data.size > 0) chunks.push(ev.data); };
+            recorder.onstop = () => {
+              for (const src of exportAudioSources) {
+                try { src.stop(); } catch (_) {}
+              }
+              const blob = new Blob(chunks, { type: mimeType });
+              const baseName = app.mode === 'scenes' ? 'movie-all-scenes' : 'animation';
+              triggerDownload(blob, `${baseName}.${ext}`);
+              resolve();
+            };
+
+            recorder.start();
+            const frameDelay = 1000 / app.fps;
+            for (const item of seq) {
+              renderSceneToContext(item.scene, ectx, WORLD_W, WORLD_H, item.frame, true, false);
+              await new Promise(r => setTimeout(r, frameDelay));
+            }
+            recorder.stop();
+          });
+        } finally {
+          btnExportMenu.textContent = 'Export ▾';
+          btnExportMenu.disabled = false;
+        }
+      }
+
+      document.getElementById('btnExportWebm').onclick = () => exportVideo('webm');
+      document.getElementById('btnExportMp4').onclick = () => exportVideo('mp4');
+
+      // Initialize
+      resizeStageCanvas();
+      renderTimeline();
+      goToFrame(0);
+    })();
+  </script>
+</body>
+</html>

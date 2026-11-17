@@ -1,0 +1,10 @@
+{
+  "name": "Easy Animator",
+  "description": "2D frame-by-frame pixel animation studio with multi-scene storyboard, viseme lip-sync, audio timeline, camera keyframes, and video/PNG export.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
