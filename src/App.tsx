@@ -30,26 +30,6 @@ export default function App() {
 
       <header>
         <div className="toolbar-group">
-          <div className="studio-brand" title="Keyframes">
-            <span className="brand-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" className="brand-diamond">
-                <defs>
-                  <linearGradient id="keyframesDiamondGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stopColor="#fef08a" />
-                    <stop offset="45%" stopColor="#fb923c" />
-                    <stop offset="100%" stopColor="#ea580c" />
-                  </linearGradient>
-                </defs>
-                <polygon
-                  points="12,2 22,12 12,22 2,12"
-                  fill="url(#keyframesDiamondGrad)"
-                  stroke="rgba(255, 255, 255, 0.35)"
-                  strokeWidth="1.2"
-                />
-              </svg>
-            </span>
-            <span className="brand-name">Keyframes</span>
-          </div>
           <div className="studio-seg">
             <button id="btnModeBasic" className="active">Basic</button>
             <button id="btnModePro">Pro</button>
@@ -66,6 +46,7 @@ export default function App() {
           </div>
           <button
             id="btnOriginPoint"
+            className="hidden-nest-ui"
             title="Show/Hide Orange Origin Point (Pivot &amp; Rotate)"
           >
             <span className="origin-btn-dot" aria-hidden="true" />
@@ -466,6 +447,7 @@ export default function App() {
         <button id="ctxLayerAddChildCel">+↳ Add Child Bitmap Layer</button>
         <button id="ctxLayerJoinAbove">Join as Child of Above</button>
         <button id="ctxLayerDetach">Detach from Parent</button>
+        <button id="ctxLayerToggleIK">Enable Inverse Kinematics</button>
         <div className="ctx-divider" />
         <button id="ctxLayerRename">Rename Layer</button>
         <button id="ctxLayerClear" className="hidden-nest-ui">Clear Background Artwork</button>
