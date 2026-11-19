@@ -12,6 +12,7 @@ export interface MoveUndoEntry {
   offsetX: number;
   offsetY: number;
   rotation?: number;
+  scale?: number;
   originX?: number;
   originY?: number;
 }
@@ -30,6 +31,7 @@ export interface TweenUndoEntry {
   offsetY: number;
   posKeys?: CelPosKey[];
   rotation?: number;
+  scale?: number;
   originX?: number;
   originY?: number;
 }
@@ -46,6 +48,7 @@ export interface Cel {
   originX?: number;
   originY?: number;
   rotation?: number;
+  scale?: number;
   posKeys?: CelPosKey[];
   nestId?: string;
   nestOriginFrame?: number;
@@ -82,6 +85,7 @@ export type VectorUndoEntry =
       offsetY: number;
       posKeys?: CelPosKey[];
       rotation?: number;
+      scale?: number;
       originX?: number;
       originY?: number;
     }
@@ -98,6 +102,7 @@ export interface VectorCel {
   originX?: number;
   originY?: number;
   rotation?: number;
+  scale?: number;
   posKeys?: CelPosKey[];
   nestId?: string;
   nestOriginFrame?: number;
@@ -130,6 +135,7 @@ export interface BgLayer {
   originX?: number;
   originY?: number;
   rotation?: number;
+  scale?: number;
 }
 
 export interface Viseme {
@@ -541,6 +547,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     showCelLayer: true,
     showVectorLayer: true,
     vectorPixelPreview: false,
+    showOriginPoint: false,
     applyCamera: true,
     showVectorTrack: false,
     showBgTrack: false,
@@ -692,6 +699,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   const ctxLayerClear = mustEl<HTMLButtonElement>('ctxLayerClear');
   const ctxLayerDelete = mustEl<HTMLButtonElement>('ctxLayerDelete');
   const paletteSwatches = mustEl<HTMLDivElement>('paletteSwatches');
+  const btnOriginPoint = mustEl<HTMLButtonElement>('btnOriginPoint');
+  const btnOriginPointText = mustEl<HTMLSpanElement>('btnOriginPointText');
   const btnVectorPixelPreview = mustEl<HTMLButtonElement>('btnVectorPixelPreview');
 
   const mouthWidget = mustEl<HTMLDivElement>('mouthWidget');
@@ -1001,6 +1010,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     let originX: number | undefined;
     let originY: number | undefined;
     let rotation: number | undefined;
+    let scale: number | undefined;
     let hasInk = false;
     let nestId: string | undefined;
     let nestOriginFrame: number | undefined;
@@ -1016,6 +1026,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         originX = prev.cel.originX;
         originY = prev.cel.originY;
         rotation = prev.cel.rotation;
+        scale = prev.cel.scale;
         hasInk = prev.cel.hasInk;
         nestId = prev.cel.nestId;
         nestOriginFrame = prev.cel.nestOriginFrame;
@@ -1032,6 +1043,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       originX,
       originY,
       rotation,
+      scale,
       nestId,
       nestOriginFrame,
     };
@@ -1114,6 +1126,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       offsetY: cel.offsetY,
       posKeys: clonePosKeys(cel.posKeys),
       rotation: cel.rotation,
+      scale: cel.scale,
       originX: cel.originX,
       originY: cel.originY,
     };
@@ -1381,6 +1394,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     let originX: number | undefined;
     let originY: number | undefined;
     let rotation: number | undefined;
+    let scale: number | undefined;
     let hasInk = false;
     let nestId: string | undefined;
     let nestOriginFrame: number | undefined;
@@ -1395,6 +1409,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         originX = prev.cel.originX;
         originY = prev.cel.originY;
         rotation = prev.cel.rotation;
+        scale = prev.cel.scale;
         hasInk = prev.cel.hasInk;
         nestId = prev.cel.nestId;
         nestOriginFrame = prev.cel.nestOriginFrame;
@@ -1411,6 +1426,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       originX,
       originY,
       rotation,
+      scale,
       nestId,
       nestOriginFrame,
     };
@@ -1427,6 +1443,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       offsetY: vCel.offsetY,
       posKeys: clonePosKeys(vCel.posKeys),
       rotation: vCel.rotation,
+      scale: vCel.scale,
       originX: vCel.originX,
       originY: vCel.originY,
     });
@@ -1439,6 +1456,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       offsetX,
       offsetY,
       rotation: vCel.rotation,
+      scale: vCel.scale,
       originX: vCel.originX,
       originY: vCel.originY,
     });
@@ -1503,6 +1521,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       offsetX,
       offsetY,
       rotation: layerObj.rotation,
+      scale: layerObj.scale,
       originX: layerObj.originX,
       originY: layerObj.originY,
     });
@@ -1515,14 +1534,17 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     offsetY: number,
     ox: number,
     oy: number,
-    rotation = 0
+    rotation = 0,
+    scale = 1
   ): Point2D {
     const dx = worldPt.x - (offsetX + ox);
     const dy = worldPt.y - (offsetY + oy);
-    if (!rotation) return { x: dx + ox, y: dy + oy };
-    const c = Math.cos(-rotation);
-    const s = Math.sin(-rotation);
-    return { x: dx * c - dy * s + ox, y: dx * s + dy * c + oy };
+    const c = rotation ? Math.cos(-rotation) : 1;
+    const s = rotation ? Math.sin(-rotation) : 0;
+    const rx = dx * c - dy * s;
+    const ry = dx * s + dy * c;
+    const invSc = scale !== 0 ? 1 / scale : 1;
+    return { x: rx * invSc + ox, y: ry * invSc + oy };
   }
 
   function computeVectorCelCenter(rootSc: Scene, vCel: VectorCel): { ax: number; ay: number } {
@@ -1596,11 +1618,12 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     newOy: number
   ): void {
     const rot = obj.rotation || 0;
+    const sc = obj.scale ?? 1;
     const dx = newOx - oldOx;
     const dy = newOy - oldOy;
-    if (rot !== 0) {
-      const c = Math.cos(rot);
-      const s = Math.sin(rot);
+    if (rot !== 0 || sc !== 1) {
+      const c = Math.cos(rot) * sc;
+      const s = Math.sin(rot) * sc;
       const rotDx = dx * c - dy * s;
       const rotDy = dx * s + dy * c;
       const shiftX = -dx + rotDx;
@@ -1671,13 +1694,20 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     };
   }
 
-  function makeLayerLocalTransform(offsetX: number, offsetY: number, ox: number, oy: number, rotation: number): Mat2D {
-    if (!rotation) {
+  function makeLayerLocalTransform(
+    offsetX: number,
+    offsetY: number,
+    ox: number,
+    oy: number,
+    rotation: number,
+    scale = 1
+  ): Mat2D {
+    if (!rotation && scale === 1) {
       return [1, 0, 0, 1, offsetX, offsetY];
     }
-    const c = Math.cos(rotation);
-    const s = Math.sin(rotation);
-    return [c, s, -s, c, offsetX + ox - c * ox + s * oy, offsetY + oy - s * ox - c * oy];
+    const cs = Math.cos(rotation) * scale;
+    const sn = Math.sin(rotation) * scale;
+    return [cs, sn, -sn, cs, offsetX + ox - cs * ox + sn * oy, offsetY + oy - sn * ox - cs * oy];
   }
 
   function normalizeTargetHierarchy(target: Scene | NestedClip): void {
@@ -1894,8 +1924,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if (!entry) return MAT_ID;
       const off = getCelOffsetAtFrame(entry.cel, entry.start, frame);
       const rot = entry.cel.rotation || 0;
-      const piv = rot ? getLayerPivotLocal(rootSc, 'cel', entry.cel) : { ox: 0, oy: 0 };
-      return makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, rot);
+      const sc = entry.cel.scale ?? 1;
+      const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', entry.cel) : { ox: 0, oy: 0 };
+      return makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, rot, sc);
     }
     if (layerKey.startsWith('vector:')) {
       const trk = target.vectorTracks.find((t) => t.id === layerKey.slice(7));
@@ -1904,15 +1935,17 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if (!vEntry) return MAT_ID;
       const off = getCelOffsetAtFrame(vEntry.cel, vEntry.start, frame);
       const rot = vEntry.cel.rotation || 0;
-      const piv = rot ? getLayerPivotLocal(rootSc, 'vector', vEntry.cel) : { ox: 0, oy: 0 };
-      return makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, rot);
+      const sc = vEntry.cel.scale ?? 1;
+      const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', vEntry.cel) : { ox: 0, oy: 0 };
+      return makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, rot, sc);
     }
     if (layerKey.startsWith('bg:') && 'bgLayers' in target) {
       const bg = target.bgLayers.find((b) => b.id === layerKey.slice(3));
       if (!bg) return MAT_ID;
       const rot = bg.rotation || 0;
-      const piv = rot ? getLayerPivotLocal(rootSc, 'bg', bg) : { ox: 0, oy: 0 };
-      return makeLayerLocalTransform(bg.offsetX, bg.offsetY, piv.ox, piv.oy, rot);
+      const sc = bg.scale ?? 1;
+      const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'bg', bg) : { ox: 0, oy: 0 };
+      return makeLayerLocalTransform(bg.offsetX, bg.offsetY, piv.ox, piv.oy, rot, sc);
     }
     if (layerKey.startsWith('mouth:') && 'mouthLayers' in target) {
       const ml = target.mouthLayers.find((m) => m.id === layerKey.slice(6));
@@ -1923,7 +1956,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const restY = Math.round(WORLD_H * 0.56);
       const odx = m.originDx || 0;
       const ody = m.originDy || 0;
-      return makeLayerLocalTransform(m.x - restX, m.y - restY, restX + odx, restY + ody, m.rotation || 0);
+      return makeLayerLocalTransform(m.x - restX, m.y - restY, restX + odx, restY + ody, m.rotation || 0, 1);
     }
     return MAT_ID;
   }
@@ -1977,12 +2010,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           const cel = entry.cel;
           const piv = getLayerPivotLocal(rootSc, 'cel', cel);
           const off = getCelOffsetAtFrame(cel, entry.start, frame);
-          const mOld = makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, cel.rotation || 0);
+          const mOld = makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, cel.rotation || 0, cel.scale ?? 1);
           const mNew = mulMat(deltaMat, mOld);
           const pPiv = applyMatPt(mNew, { x: piv.ox, y: piv.oy });
           const nextOffX = Math.round((pPiv.x - piv.ox) * 10) / 10;
           const nextOffY = Math.round((pPiv.y - piv.oy) * 10) / 10;
           cel.rotation = Math.atan2(mNew[1], mNew[0]);
+          const nextSc = Math.round(Math.hypot(mNew[0], mNew[1]) * 1000) / 1000;
+          cel.scale = Math.abs(nextSc - 1) < 0.002 ? 1 : nextSc;
           if (cel.posKeys && cel.posKeys.length > 0) {
             const dx = nextOffX - off.offsetX;
             const dy = nextOffY - off.offsetY;
@@ -2004,12 +2039,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           const vCel = vEntry.cel;
           const piv = getLayerPivotLocal(rootSc, 'vector', vCel);
           const off = getCelOffsetAtFrame(vCel, vEntry.start, frame);
-          const mOld = makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, vCel.rotation || 0);
+          const mOld = makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, vCel.rotation || 0, vCel.scale ?? 1);
           const mNew = mulMat(deltaMat, mOld);
           const pPiv = applyMatPt(mNew, { x: piv.ox, y: piv.oy });
           const nextOffX = Math.round((pPiv.x - piv.ox) * 10) / 10;
           const nextOffY = Math.round((pPiv.y - piv.oy) * 10) / 10;
           vCel.rotation = Math.atan2(mNew[1], mNew[0]);
+          const nextSc = Math.round(Math.hypot(mNew[0], mNew[1]) * 1000) / 1000;
+          vCel.scale = Math.abs(nextSc - 1) < 0.002 ? 1 : nextSc;
           if (vCel.posKeys && vCel.posKeys.length > 0) {
             const dx = nextOffX - off.offsetX;
             const dy = nextOffY - off.offsetY;
@@ -2028,12 +2065,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         const bg = target.bgLayers.find((b) => b.id === childKey.slice(3));
         if (bg) {
           const piv = getLayerPivotLocal(rootSc, 'bg', bg);
-          const mOld = makeLayerLocalTransform(bg.offsetX, bg.offsetY, piv.ox, piv.oy, bg.rotation || 0);
+          const mOld = makeLayerLocalTransform(bg.offsetX, bg.offsetY, piv.ox, piv.oy, bg.rotation || 0, bg.scale ?? 1);
           const mNew = mulMat(deltaMat, mOld);
           const pPiv = applyMatPt(mNew, { x: piv.ox, y: piv.oy });
           bg.offsetX = Math.round((pPiv.x - piv.ox) * 10) / 10;
           bg.offsetY = Math.round((pPiv.y - piv.oy) * 10) / 10;
           bg.rotation = Math.atan2(mNew[1], mNew[0]);
+          const nextSc = Math.round(Math.hypot(mNew[0], mNew[1]) * 1000) / 1000;
+          bg.scale = Math.abs(nextSc - 1) < 0.002 ? 1 : nextSc;
         }
       } else if (childKey.startsWith('mouth:') && 'mouthLayers' in target) {
         const ml = target.mouthLayers.find((m) => m.id === childKey.slice(6));
@@ -2732,8 +2771,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   ): boolean {
     const ox = typeof overrideOffsetX === 'number' ? overrideOffsetX : vCel.offsetX;
     const oy = typeof overrideOffsetY === 'number' ? overrideOffsetY : vCel.offsetY;
-    const piv = vCel.rotation ? getLayerPivotLocal(activeScene(), 'vector', vCel) : { ox: 0, oy: 0 };
-    const localPt = worldToLayerLocal({ x: worldX, y: worldY }, ox, oy, piv.ox, piv.oy, vCel.rotation || 0);
+    const sc = vCel.scale ?? 1;
+    const piv = vCel.rotation || sc !== 1 ? getLayerPivotLocal(activeScene(), 'vector', vCel) : { ox: 0, oy: 0 };
+    const localPt = worldToLayerLocal({ x: worldX, y: worldY }, ox, oy, piv.ox, piv.oy, vCel.rotation || 0, sc);
 
     if (isErase) {
       for (let i = vCel.items.length - 1; i >= 0; i--) {
@@ -2880,8 +2920,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const h = WORLD_H;
     const ox = typeof overrideOffsetX === 'number' ? overrideOffsetX : vCel.offsetX;
     const oy = typeof overrideOffsetY === 'number' ? overrideOffsetY : vCel.offsetY;
-    const piv = vCel.rotation ? getLayerPivotLocal(activeScene(), 'vector', vCel) : { ox: 0, oy: 0 };
-    const localSeed = worldToLayerLocal({ x: worldX, y: worldY }, ox, oy, piv.ox, piv.oy, vCel.rotation || 0);
+    const sc = vCel.scale ?? 1;
+    const piv = vCel.rotation || sc !== 1 ? getLayerPivotLocal(activeScene(), 'vector', vCel) : { ox: 0, oy: 0 };
+    const localSeed = worldToLayerLocal({ x: worldX, y: worldY }, ox, oy, piv.ox, piv.oy, vCel.rotation || 0, sc);
     const sx = Math.round(localSeed.x + ox);
     const sy = Math.round(localSeed.y + oy);
     if (sx < 0 || sx >= w || sy < 0 || sy >= h) return false;
@@ -3426,13 +3467,15 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     oy = 0,
     rotation = 0,
     dw?: number,
-    dh?: number
+    dh?: number,
+    scale = 1
   ): void {
     targetCtx.save();
     targetCtx.imageSmoothingEnabled = false;
-    if (rotation) {
+    if (rotation || scale !== 1) {
       targetCtx.translate(offsetX + ox, offsetY + oy);
-      targetCtx.rotate(rotation);
+      if (rotation) targetCtx.rotate(rotation);
+      if (scale !== 1) targetCtx.scale(scale, scale);
       targetCtx.translate(-ox, -oy);
     } else {
       targetCtx.translate(offsetX, offsetY);
@@ -3461,7 +3504,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     ox = 0,
     oy = 0,
     rotation = 0,
-    parentMat: Mat2D = MAT_ID
+    parentMat: Mat2D = MAT_ID,
+    scale = 1
   ): void {
     if (items.length === 0) return;
     if (state.vectorPixelPreview) {
@@ -3475,9 +3519,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if (!isIdentityMat(parentMat)) {
         vectorPixelCtx.transform(...parentMat);
       }
-      if (rotation) {
+      if (rotation || scale !== 1) {
         vectorPixelCtx.translate(offsetX + ox, offsetY + oy);
-        vectorPixelCtx.rotate(rotation);
+        if (rotation) vectorPixelCtx.rotate(rotation);
+        if (scale !== 1) vectorPixelCtx.scale(scale, scale);
         vectorPixelCtx.translate(-ox, -oy);
       } else {
         vectorPixelCtx.translate(offsetX, offsetY);
@@ -3532,9 +3577,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       vectorScratchCtx.transform(...parentMat);
     }
 
-    if (rotation) {
+    if (rotation || scale !== 1) {
       vectorScratchCtx.translate(offsetX + ox, offsetY + oy);
-      vectorScratchCtx.rotate(rotation);
+      if (rotation) vectorScratchCtx.rotate(rotation);
+      if (scale !== 1) vectorScratchCtx.scale(scale, scale);
       vectorScratchCtx.translate(-ox, -oy);
     } else {
       vectorScratchCtx.translate(offsetX, offsetY);
@@ -3578,7 +3624,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const ox = typeof overrideOffsetX === 'number' ? overrideOffsetX : vCel.offsetX;
     const oy = typeof overrideOffsetY === 'number' ? overrideOffsetY : vCel.offsetY;
     const rot = vCel.rotation || 0;
-    const piv = rot ? getLayerPivotLocal(rootSc, 'vector', vCel) : { ox: 0, oy: 0 };
+    const sc = vCel.scale ?? 1;
+    const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', vCel) : { ox: 0, oy: 0 };
     renderVectorItemsWithOffset(
       targetCtx,
       vCel.items,
@@ -3595,7 +3642,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       piv.ox,
       piv.oy,
       rot,
-      parentMat
+      parentMat,
+      sc
     );
   }
 
@@ -3632,9 +3680,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         if (!subCel) continue;
         const subOff = getCelOffsetAtFrame(subCel.cel, subCel.start, clipFrame);
         const subRot = subCel.cel.rotation || 0;
-        const subPiv = subRot ? getLayerPivotLocal(sc, 'cel', subCel.cel) : { ox: 0, oy: 0 };
+        const subSc = subCel.cel.scale ?? 1;
+        const subPiv = subRot || subSc !== 1 ? getLayerPivotLocal(sc, 'cel', subCel.cel) : { ox: 0, oy: 0 };
         if (subCel.cel.nestId) {
-          const selfMat = makeLayerLocalTransform(subOff.offsetX, subOff.offsetY, subPiv.ox, subPiv.oy, subRot);
+          const selfMat = makeLayerLocalTransform(subOff.offsetX, subOff.offsetY, subPiv.ox, subPiv.oy, subRot, subSc);
           const nextOuter = mulMat(combMat, selfMat);
           renderNestedClipAtFrame(
             sc,
@@ -3654,7 +3703,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         } else {
           targetCtx.save();
           if (!isIdentityMat(combMat)) targetCtx.transform(...combMat);
-          drawTransformedCanvas(targetCtx, subCel.cel.canvas, subOff.offsetX, subOff.offsetY, subPiv.ox, subPiv.oy, subRot);
+          drawTransformedCanvas(targetCtx, subCel.cel.canvas, subOff.offsetX, subOff.offsetY, subPiv.ox, subPiv.oy, subRot, undefined, undefined, subSc);
           targetCtx.restore();
         }
       } else if (layerKey.startsWith('vector:')) {
@@ -3664,9 +3713,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         if (!subVCel) continue;
         const vOff = getCelOffsetAtFrame(subVCel.cel, subVCel.start, clipFrame);
         const vRot = subVCel.cel.rotation || 0;
-        const vPiv = vRot ? getLayerPivotLocal(sc, 'vector', subVCel.cel) : { ox: 0, oy: 0 };
+        const vSc = subVCel.cel.scale ?? 1;
+        const vPiv = vRot || vSc !== 1 ? getLayerPivotLocal(sc, 'vector', subVCel.cel) : { ox: 0, oy: 0 };
         if (subVCel.cel.nestId) {
-          const selfMat = makeLayerLocalTransform(vOff.offsetX, vOff.offsetY, vPiv.ox, vPiv.oy, vRot);
+          const selfMat = makeLayerLocalTransform(vOff.offsetX, vOff.offsetY, vPiv.ox, vPiv.oy, vRot, vSc);
           const nextOuter = mulMat(combMat, selfMat);
           renderNestedClipAtFrame(
             sc,
@@ -3700,7 +3750,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             vPiv.ox,
             vPiv.oy,
             vRot,
-            combMat
+            combMat,
+            vSc
           );
         }
       }
@@ -3742,7 +3793,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     alpha: number,
     ox = 0,
     oy = 0,
-    rotation = 0
+    rotation = 0,
+    scale = 1
   ): void {
     const w = srcCanvas.width;
     const h = srcCanvas.height;
@@ -3762,9 +3814,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     targetCtx.save();
     targetCtx.imageSmoothingEnabled = false;
     targetCtx.globalAlpha = alpha;
-    if (rotation) {
+    if (rotation || scale !== 1) {
       targetCtx.translate(offsetX + ox, offsetY + oy);
-      targetCtx.rotate(rotation);
+      if (rotation) targetCtx.rotate(rotation);
+      if (scale !== 1) targetCtx.scale(scale, scale);
       targetCtx.translate(-ox, -oy);
     } else {
       targetCtx.translate(offsetX, offsetY);
@@ -3783,7 +3836,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     overrideOffsetY?: number
   ): void {
     const rot = cel.rotation || 0;
-    const piv = rot ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
+    const sc = cel.scale ?? 1;
+    const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
     drawTintedCanvas(
       targetCtx,
       cel.canvas,
@@ -3793,7 +3847,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       alpha,
       piv.ox,
       piv.oy,
-      rot
+      rot,
+      sc
     );
   }
 
@@ -3807,6 +3862,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     oy: number;
     rotation: number;
     localRotation: number;
+    scale: number;
     parentRot: number;
     parentMat: Mat2D;
     defaultOx: number;
@@ -3829,6 +3885,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       ox: number,
       oy: number,
       localRotation: number,
+      scale: number,
       defaultOx: number,
       defaultOy: number,
       extra?: { celEntry?: { start: number; cel: Cel } | null; vecEntry?: { start: number; cel: VectorCel } | null }
@@ -3847,6 +3904,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         oy,
         rotation: totalRot,
         localRotation,
+        scale,
         parentRot,
         parentMat,
         defaultOx,
@@ -3875,12 +3933,13 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           piv.ox,
           piv.oy,
           entry.cel.rotation || 0,
+          entry.cel.scale ?? 1,
           def.ax,
           def.ay,
           { celEntry: entry }
         );
       }
-      return makeResult('cel', key, WORLD_W * 0.5, WORLD_H * 0.5, WORLD_W * 0.5, WORLD_H * 0.5, 0, WORLD_W * 0.5, WORLD_H * 0.5, {
+      return makeResult('cel', key, WORLD_W * 0.5, WORLD_H * 0.5, WORLD_W * 0.5, WORLD_H * 0.5, 0, 1, WORLD_W * 0.5, WORLD_H * 0.5, {
         celEntry: null,
       });
     }
@@ -3902,12 +3961,13 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           piv.ox,
           piv.oy,
           entry.cel.rotation || 0,
+          entry.cel.scale ?? 1,
           def.ax,
           def.ay,
           { vecEntry: entry }
         );
       }
-      return makeResult('vector', key, WORLD_W * 0.5, WORLD_H * 0.5, WORLD_W * 0.5, WORLD_H * 0.5, 0, WORLD_W * 0.5, WORLD_H * 0.5, {
+      return makeResult('vector', key, WORLD_W * 0.5, WORLD_H * 0.5, WORLD_W * 0.5, WORLD_H * 0.5, 0, 1, WORLD_W * 0.5, WORLD_H * 0.5, {
         vecEntry: null,
       });
     }
@@ -3918,7 +3978,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const key = `bg:${bg.id}`;
       const def = bg.hasInk ? computeCanvasInkCenter(bg.canvas) || { ax: WORLD_W * 0.5, ay: WORLD_H * 0.5 } : { ax: WORLD_W * 0.5, ay: WORLD_H * 0.5 };
       const piv = getLayerPivotLocal(rootSc, 'bg', bg);
-      return makeResult('bg', key, bg.offsetX + piv.ox, bg.offsetY + piv.oy, piv.ox, piv.oy, bg.rotation || 0, def.ax, def.ay);
+      return makeResult('bg', key, bg.offsetX + piv.ox, bg.offsetY + piv.oy, piv.ox, piv.oy, bg.rotation || 0, bg.scale ?? 1, def.ax, def.ay);
     }
 
     if (state.activeLayer === 'mouth' && nestStack.length === 0) {
@@ -3933,7 +3993,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       };
       const odx = m.originDx || 0;
       const ody = m.originDy || 0;
-      return makeResult('mouth', key, m.x + odx, m.y + ody, odx, ody, m.rotation || 0, 0, 0);
+      return makeResult('mouth', key, m.x + odx, m.y + ody, odx, ody, m.rotation || 0, (m.scale || 100) / 100, 0, 0);
     }
 
     return null;
@@ -4216,7 +4276,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       targetCtx.restore();
     }
 
-    if (!state.isPlaying) {
+    if (!state.isPlaying && state.showOriginPoint) {
       const gizmo = getActiveLayerGizmoInfo(rootSc, frame, inv);
       if (gizmo) {
         const showRotateControls =
@@ -4318,10 +4378,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const bg = target.bgLayers.find((b) => b.id === layerKey.slice(3));
       if (!bg || !bg.visible || !bg.hasInk) return;
       const bgRot = bg.rotation || 0;
-      const bgPiv = bgRot ? getLayerPivotLocal(rootSc, 'bg', bg) : { ox: 0, oy: 0 };
+      const bgSc = bg.scale ?? 1;
+      const bgPiv = bgRot || bgSc !== 1 ? getLayerPivotLocal(rootSc, 'bg', bg) : { ox: 0, oy: 0 };
       targetCtx.save();
       if (!isIdentityMat(parentMat)) targetCtx.transform(...parentMat);
-      drawTransformedCanvas(targetCtx, bg.canvas, bg.offsetX, bg.offsetY, bgPiv.ox, bgPiv.oy, bgRot);
+      drawTransformedCanvas(targetCtx, bg.canvas, bg.offsetX, bg.offsetY, bgPiv.ox, bgPiv.oy, bgRot, undefined, undefined, bgSc);
       targetCtx.restore();
     } else if (layerKey.startsWith('cel:')) {
       const cTrk = target.celTracks.find((t) => t.id === layerKey.slice(4));
@@ -4344,10 +4405,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             const prevFrame = prevEntry.start + Math.max(0, prevEntry.cel.duration - 1);
             const prevOff = getCelOffsetAtFrame(prevEntry.cel, prevEntry.start, prevFrame);
             const rot = prevEntry.cel.rotation || 0;
-            const piv = rot ? getLayerPivotLocal(rootSc, 'cel', prevEntry.cel) : { ox: 0, oy: 0 };
+            const sc = prevEntry.cel.scale ?? 1;
+            const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', prevEntry.cel) : { ox: 0, oy: 0 };
             if (prevEntry.cel.nestId) {
               const c = rasterizeNestedClipToWorldCanvas(rootSc, prevEntry.cel.nestId, prevFrame, prevEntry.cel.nestOriginFrame ?? 0);
-              drawTintedCanvas(targetCtx, c, prevOff.offsetX, prevOff.offsetY, '#ef4444', 0.25, piv.ox, piv.oy, rot);
+              drawTintedCanvas(targetCtx, c, prevOff.offsetX, prevOff.offsetY, '#ef4444', 0.25, piv.ox, piv.oy, rot, sc);
             } else {
               drawTintedCel(rootSc, targetCtx, prevEntry.cel, '#ef4444', 0.25, prevOff.offsetX, prevOff.offsetY);
             }
@@ -4358,10 +4420,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           if (nextEntry && isCelInkFilled(rootSc, nextEntry.cel)) {
             const nextOff = getCelOffsetAtFrame(nextEntry.cel, nextEntry.start, nextEntry.start);
             const rot = nextEntry.cel.rotation || 0;
-            const piv = rot ? getLayerPivotLocal(rootSc, 'cel', nextEntry.cel) : { ox: 0, oy: 0 };
+            const sc = nextEntry.cel.scale ?? 1;
+            const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', nextEntry.cel) : { ox: 0, oy: 0 };
             if (nextEntry.cel.nestId) {
               const c = rasterizeNestedClipToWorldCanvas(rootSc, nextEntry.cel.nestId, nextEntry.start, nextEntry.cel.nestOriginFrame ?? 0);
-              drawTintedCanvas(targetCtx, c, nextOff.offsetX, nextOff.offsetY, '#3b82f6', 0.22, piv.ox, piv.oy, rot);
+              drawTintedCanvas(targetCtx, c, nextOff.offsetX, nextOff.offsetY, '#3b82f6', 0.22, piv.ox, piv.oy, rot, sc);
             } else {
               drawTintedCel(rootSc, targetCtx, nextEntry.cel, '#3b82f6', 0.22, nextOff.offsetX, nextOff.offsetY);
             }
@@ -4373,9 +4436,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if ((forExport || !useViewport || state.showCelLayer) && activeEntry) {
         const activeOff = getCelOffsetAtFrame(activeEntry.cel, activeEntry.start, frame);
         const rot = activeEntry.cel.rotation || 0;
-        const piv = rot ? getLayerPivotLocal(rootSc, 'cel', activeEntry.cel) : { ox: 0, oy: 0 };
+        const sc = activeEntry.cel.scale ?? 1;
+        const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', activeEntry.cel) : { ox: 0, oy: 0 };
         if (activeEntry.cel.nestId) {
-          const selfMat = makeLayerLocalTransform(activeOff.offsetX, activeOff.offsetY, piv.ox, piv.oy, rot);
+          const selfMat = makeLayerLocalTransform(activeOff.offsetX, activeOff.offsetY, piv.ox, piv.oy, rot, sc);
           const combOuter = mulMat(parentMat, selfMat);
           renderNestedClipAtFrame(
             rootSc,
@@ -4395,7 +4459,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         } else {
           targetCtx.save();
           if (!isIdentityMat(parentMat)) targetCtx.transform(...parentMat);
-          drawTransformedCanvas(targetCtx, activeEntry.cel.canvas, activeOff.offsetX, activeOff.offsetY, piv.ox, piv.oy, rot);
+          drawTransformedCanvas(targetCtx, activeEntry.cel.canvas, activeOff.offsetX, activeOff.offsetY, piv.ox, piv.oy, rot, undefined, undefined, sc);
           targetCtx.restore();
         }
       }
@@ -4421,12 +4485,13 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             const prevFrame = prevV.start + Math.max(0, prevV.cel.duration - 1);
             const vOff = getCelOffsetAtFrame(prevV.cel, prevV.start, prevFrame);
             const vRot = prevV.cel.rotation || 0;
-            const vPiv = vRot ? getLayerPivotLocal(rootSc, 'vector', prevV.cel) : { ox: 0, oy: 0 };
+            const vSc = prevV.cel.scale ?? 1;
+            const vPiv = vRot || vSc !== 1 ? getLayerPivotLocal(rootSc, 'vector', prevV.cel) : { ox: 0, oy: 0 };
             if (prevV.cel.nestId) {
               targetCtx.save();
               if (!isIdentityMat(parentMat)) targetCtx.transform(...parentMat);
               const c = rasterizeNestedClipToWorldCanvas(rootSc, prevV.cel.nestId, prevFrame, prevV.cel.nestOriginFrame ?? 0);
-              drawTintedCanvas(targetCtx, c, vOff.offsetX, vOff.offsetY, '#ef4444', 0.25, vPiv.ox, vPiv.oy, vRot);
+              drawTintedCanvas(targetCtx, c, vOff.offsetX, vOff.offsetY, '#ef4444', 0.25, vPiv.ox, vPiv.oy, vRot, vSc);
               targetCtx.restore();
             } else {
               renderVectorCelToContext(
@@ -4455,12 +4520,13 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           if (nextV && isVectorCelInkFilled(rootSc, nextV.cel)) {
             const vOff = getCelOffsetAtFrame(nextV.cel, nextV.start, nextV.start);
             const vRot = nextV.cel.rotation || 0;
-            const vPiv = vRot ? getLayerPivotLocal(rootSc, 'vector', nextV.cel) : { ox: 0, oy: 0 };
+            const vSc = nextV.cel.scale ?? 1;
+            const vPiv = vRot || vSc !== 1 ? getLayerPivotLocal(rootSc, 'vector', nextV.cel) : { ox: 0, oy: 0 };
             if (nextV.cel.nestId) {
               targetCtx.save();
               if (!isIdentityMat(parentMat)) targetCtx.transform(...parentMat);
               const c = rasterizeNestedClipToWorldCanvas(rootSc, nextV.cel.nestId, nextV.start, nextV.cel.nestOriginFrame ?? 0);
-              drawTintedCanvas(targetCtx, c, vOff.offsetX, vOff.offsetY, '#3b82f6', 0.22, vPiv.ox, vPiv.oy, vRot);
+              drawTintedCanvas(targetCtx, c, vOff.offsetX, vOff.offsetY, '#3b82f6', 0.22, vPiv.ox, vPiv.oy, vRot, vSc);
               targetCtx.restore();
             } else {
               renderVectorCelToContext(
@@ -4489,9 +4555,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         if (!vEntry) return;
         const vOff = getCelOffsetAtFrame(vEntry.cel, vEntry.start, frame);
         const vRot = vEntry.cel.rotation || 0;
-        const vPiv = vRot ? getLayerPivotLocal(rootSc, 'vector', vEntry.cel) : { ox: 0, oy: 0 };
+        const vSc = vEntry.cel.scale ?? 1;
+        const vPiv = vRot || vSc !== 1 ? getLayerPivotLocal(rootSc, 'vector', vEntry.cel) : { ox: 0, oy: 0 };
         if (vEntry.cel.nestId) {
-          const selfMat = makeLayerLocalTransform(vOff.offsetX, vOff.offsetY, vPiv.ox, vPiv.oy, vRot);
+          const selfMat = makeLayerLocalTransform(vOff.offsetX, vOff.offsetY, vPiv.ox, vPiv.oy, vRot, vSc);
           const combOuter = mulMat(parentMat, selfMat);
           renderNestedClipAtFrame(
             rootSc,
@@ -4902,6 +4969,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     | { mode: 'camScale'; startStagePt: Point2D; startScale: number }
     | { mode: 'camPan'; startStagePt: Point2D; startX: number; startY: number }
     | { mode: 'mouthScale'; startStagePt: Point2D; startScale: number; mouthLayer: MouthLayer }
+    | {
+        mode: 'scaleLayer';
+        layer: 'cel' | 'vector' | 'bg';
+        targetObj: Cel | VectorCel | BgLayer;
+        startScale: number;
+        startStagePt: Point2D;
+        moved: boolean;
+      }
     | { mode: 'moveMouth'; startX: number; startY: number; startStagePt: Point2D; totalScale: number; parentMat: Mat2D; mouthLayer: MouthLayer }
     | {
         mode: 'moveVector';
@@ -4975,6 +5050,138 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       }
     | null = null;
 
+  const activeTouchPointers = new Map<number, Point2D>();
+  let isPinching = false;
+  let pinchState: {
+    startDist: number;
+    startZoom: number;
+    startPanX: number;
+    startPanY: number;
+    startMid: Point2D;
+  } | null = null;
+
+  function cancelInProgressSinglePointerWork(): void {
+    const hadWork =
+      isPointerDown ||
+      activeDrawTarget !== null ||
+      activeDrawVector !== null ||
+      activeNudgeState !== null ||
+      activeBitmapNudgeState !== null ||
+      moveCamState !== null;
+    if (!hadWork) return;
+
+    isPointerDown = false;
+    isRightErasing = false;
+
+    if (activeDrawVector) {
+      const cel = activeDrawVector.cel;
+      const undone = cel.undoStack.pop();
+      if (undone && undone.type === 'items') {
+        cel.items = cloneVectorItems(undone.items);
+        cel.hasInk = undone.hasInk;
+      }
+    }
+
+    if (activeDrawTarget) {
+      const undone = activeDrawTarget.undoStack.pop();
+      if (undone && undone.type === 'pixels') {
+        const cctx = activeDrawTarget.canvas.getContext('2d');
+        if (cctx) {
+          cctx.imageSmoothingEnabled = false;
+          cctx.putImageData(undone.imgData, 0, 0);
+        }
+      }
+      if (activeDrawIsMouth) {
+        mouthUndoStacks.get(state.mouthLayer)?.pop();
+      }
+    }
+
+    if (activeNudgeState) {
+      const cel = activeNudgeState.cel;
+      const undone = cel.undoStack.pop();
+      if (undone && undone.type === 'items') {
+        cel.items = cloneVectorItems(undone.items);
+        cel.hasInk = undone.hasInk;
+      }
+    }
+
+    if (activeBitmapNudgeState) {
+      const cel = activeBitmapNudgeState.cel;
+      const undone = cel.undoStack.pop();
+      if (undone && undone.type === 'pixels') {
+        const cctx = cel.canvas.getContext('2d');
+        if (cctx) {
+          cctx.imageSmoothingEnabled = false;
+          cctx.putImageData(undone.imgData, 0, 0);
+        }
+      }
+    }
+
+    if (moveCamState) {
+      if (moveCamState.mode === 'moveFrame' || moveCamState.mode === 'moveVector') {
+        const undone = moveCamState.cel.undoStack.pop();
+        if (undone && undone.type === 'move') {
+          moveCamState.cel.offsetX = undone.offsetX;
+          moveCamState.cel.offsetY = undone.offsetY;
+        }
+      } else if (
+        moveCamState.mode === 'moveOrigin' ||
+        moveCamState.mode === 'rotateLayer' ||
+        moveCamState.mode === 'scaleLayer'
+      ) {
+        if (moveCamState.layer === 'mouth') {
+          const ml = moveCamState.mouthLayer || state.mouthLayer;
+          const act = mouthUndoStacks.get(ml)?.pop();
+          if (act && act.kind === 'transform') {
+            if (act.prevKey) ml.keys.set(act.frame, { ...act.prevKey });
+            else ml.keys.delete(act.frame);
+          }
+        } else if (moveCamState.targetObj) {
+          const obj = moveCamState.targetObj;
+          const undone = obj.undoStack.pop();
+          if (undone && (undone.type === 'move' || undone.type === 'tween' || undone.type === 'items')) {
+            obj.offsetX = undone.offsetX;
+            obj.offsetY = undone.offsetY;
+            obj.rotation = undone.rotation;
+            obj.scale = undone.scale;
+            obj.originX = undone.originX;
+            obj.originY = undone.originY;
+            if (undone.type === 'tween' && 'posKeys' in obj) {
+              obj.posKeys = clonePosKeys(undone.posKeys);
+            }
+          }
+        }
+      } else if (moveCamState.mode === 'moveTweenKey' || moveCamState.mode === 'moveTweenCurve') {
+        const undone = moveCamState.cel.undoStack.pop();
+        if (undone && undone.type === 'tween') {
+          moveCamState.cel.offsetX = undone.offsetX;
+          moveCamState.cel.offsetY = undone.offsetY;
+          moveCamState.cel.posKeys = clonePosKeys(undone.posKeys);
+        }
+      } else if (moveCamState.mode === 'mouthScale' || moveCamState.mode === 'moveMouth') {
+        const ml = moveCamState.mouthLayer;
+        const act = mouthUndoStacks.get(ml)?.pop();
+        if (act && act.kind === 'transform') {
+          if (act.prevKey) ml.keys.set(act.frame, { ...act.prevKey });
+          else ml.keys.delete(act.frame);
+        }
+      }
+    }
+
+    lastWorldPt = null;
+    activeDrawTarget = null;
+    activeDrawVector = null;
+    activeDrawIsMouth = false;
+    activeNudgeState = null;
+    activeBitmapNudgeState = null;
+    moveCamState = null;
+    stage.style.cursor = state.tool === 'moveCam' ? 'move' : 'crosshair';
+    updateMouthWidget();
+    updateStageBadge();
+    renderTimeline();
+    renderStage();
+  }
+
   function subdividePointsNearCircle(
     pts: Point2D[],
     center: Point2D,
@@ -5005,20 +5212,102 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   stage.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  stageContainer.addEventListener('pointerdown', (e) => {
-    if (e.button === 1) {
-      e.preventDefault();
-      isViewPanning = true;
-      stageContainer.setPointerCapture(e.pointerId);
-      viewPanStart = {
-        clientX: e.clientX,
-        clientY: e.clientY,
-        panX: state.viewPanX,
-        panY: state.viewPanY,
-      };
-      stage.style.cursor = 'grabbing';
+  stageContainer.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (e.pointerType === 'touch') {
+        activeTouchPointers.set(e.pointerId, getStageCoords(e));
+        if (activeTouchPointers.size >= 2) {
+          e.preventDefault();
+          cancelInProgressSinglePointerWork();
+          const pts = Array.from(activeTouchPointers.values());
+          const p1 = pts[0];
+          const p2 = pts[1];
+          isPinching = true;
+          pinchState = {
+            startDist: Math.max(10, Math.hypot(p2.x - p1.x, p2.y - p1.y)),
+            startZoom: state.viewZoom,
+            startPanX: state.viewPanX,
+            startPanY: state.viewPanY,
+            startMid: { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5 },
+          };
+          return;
+        }
+      }
+      if (e.button === 1) {
+        e.preventDefault();
+        isViewPanning = true;
+        stageContainer.setPointerCapture(e.pointerId);
+        viewPanStart = {
+          clientX: e.clientX,
+          clientY: e.clientY,
+          panX: state.viewPanX,
+          panY: state.viewPanY,
+        };
+        stage.style.cursor = 'grabbing';
+      }
+    },
+    { capture: true }
+  );
+
+  stageContainer.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length >= 2) e.preventDefault();
+    },
+    { passive: false }
+  );
+  stageContainer.addEventListener(
+    'touchmove',
+    (e) => {
+      if (e.touches.length >= 2) e.preventDefault();
+    },
+    { passive: false }
+  );
+  stageContainer.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
+  stageContainer.addEventListener('gesturechange', (e) => e.preventDefault(), { passive: false });
+
+  window.addEventListener(
+    'pointermove',
+    (e) => {
+      if (e.pointerType !== 'touch' || !activeTouchPointers.has(e.pointerId)) return;
+      activeTouchPointers.set(e.pointerId, getStageCoords(e));
+      if (!isPinching || !pinchState || activeTouchPointers.size < 2) return;
+      const pts = Array.from(activeTouchPointers.values());
+      const p1 = pts[0];
+      const p2 = pts[1];
+      const curDist = Math.max(10, Math.hypot(p2.x - p1.x, p2.y - p1.y));
+      const curMid = { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5 };
+      const fit = getFitScale();
+      const oldTotal = fit * pinchState.startZoom;
+      const newZoom = Math.max(0.25, Math.min(20, pinchState.startZoom * (curDist / pinchState.startDist)));
+      const newTotal = fit * newZoom;
+      const relCamX = (pinchState.startMid.x - stage.width / 2 - pinchState.startPanX) / oldTotal;
+      const relCamY = (pinchState.startMid.y - stage.height / 2 - pinchState.startPanY) / oldTotal;
+
+      state.viewZoom = newZoom;
+      state.viewPanX = curMid.x - stage.width / 2 - relCamX * newTotal;
+      state.viewPanY = curMid.y - stage.height / 2 - relCamY * newTotal;
+
+      updateViewResetBtn();
+      updateStageBadge();
+      renderStage();
+    },
+    { signal }
+  );
+
+  const endTouchPointer = (e: PointerEvent) => {
+    if (e.pointerType !== 'touch' || !activeTouchPointers.has(e.pointerId)) return;
+    activeTouchPointers.delete(e.pointerId);
+    if (activeTouchPointers.size < 2) {
+      pinchState = null;
     }
-  });
+    if (activeTouchPointers.size === 0) {
+      isPinching = false;
+    }
+  };
+  window.addEventListener('pointerup', endTouchPointer, { signal });
+  window.addEventListener('pointercancel', endTouchPointer, { signal });
 
   stageContainer.addEventListener('pointermove', (e) => {
     if (!isViewPanning || !viewPanStart) return;
@@ -5256,7 +5545,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   stage.addEventListener('pointerdown', (e) => {
-    if (e.button === 1 || state.isPlaying) return;
+    if (e.button === 1 || state.isPlaying || isPinching || activeTouchPointers.size >= 2) return;
     stage.setPointerCapture(e.pointerId);
     const stagePt = getStageCoords(e);
     hoverStagePt = stagePt;
@@ -5270,7 +5559,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const totalScale = (cam.scale / 100) * getTotalViewScale();
       const worldPt = stageToWorld(stagePt, cam);
       const inv = 1 / totalScale;
-      if (e.button === 0 && !e.shiftKey) {
+      if (e.button === 0 && !e.shiftKey && state.showOriginPoint) {
         const gizmo = getActiveLayerGizmoInfo(rootSc, state.currentFrame, inv);
         if (gizmo) {
           if (Math.hypot(worldPt.x - gizmo.worldOx, worldPt.y - gizmo.worldOy) <= 18 * inv) {
@@ -5315,14 +5604,71 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             return;
           }
         }
-        if (state.activeLayer === 'mouth' && !e.shiftKey) {
+        if (state.selectedTrack === 'cam' && !e.shiftKey) {
+          moveCamState = { mode: 'camScale', startStagePt: stagePt, startScale: cam.scale };
+        } else if (state.activeLayer === 'mouth' && !e.shiftKey) {
           const ml = state.mouthLayer;
           if (!ml.visible) ml.visible = true;
           pushMouthTransformUndo(state.currentFrame, ml);
           const curM = getActiveMouthState(ml);
           moveCamState = { mode: 'mouthScale', startStagePt: stagePt, startScale: curM.scale || 100, mouthLayer: ml };
+        } else if (state.activeLayer === 'vector') {
+          if (!state.showVectorLayer) state.showVectorLayer = true;
+          if (!state.activeVectorTrack.visible) {
+            state.activeVectorTrack.visible = true;
+            renderTimeline();
+          }
+          const existed = Boolean(getVectorCelEntryAt(state.currentFrame));
+          const entry = ensureVectorCelAt(state.currentFrame, true);
+          const cel = entry.cel;
+          if (cel.posKeys && cel.posKeys.length > 0) pushTweenUndo(cel);
+          else pushVectorMoveUndo(cel, cel.offsetX, cel.offsetY);
+          moveCamState = {
+            mode: 'scaleLayer',
+            layer: 'vector',
+            targetObj: cel,
+            startScale: cel.scale ?? 1,
+            startStagePt: stagePt,
+            moved: false,
+          };
+          if (!existed) renderTimeline();
+          stage.style.cursor = 'nwse-resize';
+        } else if (state.activeLayer === 'bg' && nestStack.length === 0) {
+          const { obj } = getTargetLayerForEdit(true, true);
+          if (!obj) {
+            isPointerDown = false;
+            return;
+          }
+          pushMoveUndo(obj, obj.offsetX, obj.offsetY);
+          moveCamState = {
+            mode: 'scaleLayer',
+            layer: 'bg',
+            targetObj: obj,
+            startScale: obj.scale ?? 1,
+            startStagePt: stagePt,
+            moved: false,
+          };
+          stage.style.cursor = 'nwse-resize';
         } else {
-          moveCamState = { mode: 'camScale', startStagePt: stagePt, startScale: cam.scale };
+          if (!state.activeCelTrack.visible) {
+            state.activeCelTrack.visible = true;
+            renderTimeline();
+          }
+          const existed = Boolean(getCelEntryAt(state.currentFrame));
+          const entry = ensureCelAt(state.currentFrame, true);
+          const cel = entry.cel;
+          if (cel.posKeys && cel.posKeys.length > 0) pushTweenUndo(cel);
+          else pushMoveUndo(cel, cel.offsetX, cel.offsetY);
+          moveCamState = {
+            mode: 'scaleLayer',
+            layer: 'cel',
+            targetObj: cel,
+            startScale: cel.scale ?? 1,
+            startStagePt: stagePt,
+            moved: false,
+          };
+          if (!existed) renderTimeline();
+          stage.style.cursor = 'nwse-resize';
         }
       } else if (e.shiftKey) {
         moveCamState = { mode: 'camPan', startStagePt: stagePt, startX: cam.x, startY: cam.y };
@@ -5648,8 +5994,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         pushVectorItemsUndo(cel);
 
         const vOff = getCelOffsetAtFrame(cel, start, state.currentFrame);
-        const piv = cel.rotation ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
-        const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0);
+        const sc = cel.scale ?? 1;
+        const piv = cel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
+        const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0, sc);
         const r = state.nudgeRadius;
         const targets: Array<{ pt: Point2D; origX: number; origY: number; weight: number }> = [];
 
@@ -5707,8 +6054,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const { start, cel } = ensureVectorCelAt(state.currentFrame, eraseMode);
       pushVectorItemsUndo(cel);
       const vOff = getCelOffsetAtFrame(cel, start, state.currentFrame);
-      const piv = cel.rotation ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
-      const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0);
+      const sc = cel.scale ?? 1;
+      const piv = cel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
+      const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0, sc);
       const item: VectorStrokeItem | VectorEraseItem = eraseMode
         ? { kind: 'erase', points: [localPt], size: state.brushSize }
         : { kind: 'stroke', points: [localPt], color: state.brushColor, size: state.brushSize };
@@ -5753,12 +6101,13 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const imgData = cctx.getImageData(0, 0, w, h);
       const pixels32 = new Uint32Array(imgData.data.buffer);
       const celOff = getCelOffsetAtFrame(cel, activeEntry.start, state.currentFrame);
-      const piv = cel.rotation ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
+      const sc = cel.scale ?? 1;
+      const piv = cel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
       activeBitmapNudgeState = {
         cel,
         imgData,
         pixels32,
-        lastLocalPt: worldToLayerLocal(pLocalPt, celOff.offsetX, celOff.offsetY, piv.ox, piv.oy, cel.rotation || 0),
+        lastLocalPt: worldToLayerLocal(pLocalPt, celOff.offsetX, celOff.offsetY, piv.ox, piv.oy, cel.rotation || 0, sc),
         accX: 0,
         accY: 0,
         radius: state.nudgeRadius,
@@ -5773,8 +6122,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if (obj) {
         const curCelEntry = layerType === 'cel' ? getCelEntryAt(state.currentFrame) : null;
         const off = curCelEntry ? getCelOffsetAtFrame(curCelEntry.cel, curCelEntry.start, state.currentFrame) : { offsetX: obj.offsetX, offsetY: obj.offsetY };
-        const piv = obj.rotation ? getLayerPivotLocal(rootSc, layerType, obj) : { ox: 0, oy: 0 };
-        const lp = worldToLayerLocal(pLocalPt, off.offsetX, off.offsetY, piv.ox, piv.oy, obj.rotation || 0);
+        const sc = obj.scale ?? 1;
+        const piv = obj.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, layerType, obj) : { ox: 0, oy: 0 };
+        const lp = worldToLayerLocal(pLocalPt, off.offsetX, off.offsetY, piv.ox, piv.oy, obj.rotation || 0, sc);
         floodFillLayer(obj, lp.x, lp.y, state.brushColor, false, false);
       }
       if (created) renderTimeline();
@@ -5795,8 +6145,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       cctx.imageSmoothingEnabled = false;
       const curCelEntry = layerType === 'cel' ? getCelEntryAt(state.currentFrame) : null;
       const off = curCelEntry ? getCelOffsetAtFrame(curCelEntry.cel, curCelEntry.start, state.currentFrame) : { offsetX: obj.offsetX, offsetY: obj.offsetY };
-      const piv = obj.rotation ? getLayerPivotLocal(rootSc, layerType, obj) : { ox: 0, oy: 0 };
-      const lp = worldToLayerLocal(pLocalPt, off.offsetX, off.offsetY, piv.ox, piv.oy, obj.rotation || 0);
+      const sc = obj.scale ?? 1;
+      const piv = obj.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, layerType, obj) : { ox: 0, oy: 0 };
+      const lp = worldToLayerLocal(pLocalPt, off.offsetX, off.offsetY, piv.ox, piv.oy, obj.rotation || 0, sc);
       drawPixelDisk(cctx, lp.x, lp.y, state.brushSize, state.brushColor, eraseMode);
     }
     obj.hasInk = true;
@@ -5808,7 +6159,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   });
 
   stage.addEventListener('pointermove', (e) => {
-    if (isViewPanning) return;
+    if (isPinching || activeTouchPointers.size >= 2 || isViewPanning) return;
     const stagePt = getStageCoords(e);
     hoverStagePt = stagePt;
 
@@ -5817,7 +6168,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         const cam = getEvaluatedCamera(state.currentFrame);
         const worldPt = stageToWorld(stagePt, cam);
         const inv = 1 / (getTotalViewScale() * (cam.scale / 100));
-        const gizmo = getActiveLayerGizmoInfo(activeScene(), state.currentFrame, inv);
+        const gizmo = state.showOriginPoint ? getActiveLayerGizmoInfo(activeScene(), state.currentFrame, inv) : null;
         let nextGizmoHit: 'origin' | 'rotateHandle' | null = null;
         if (gizmo) {
           if (Math.hypot(worldPt.x - gizmo.worldOx, worldPt.y - gizmo.worldOy) <= 18 * inv) {
@@ -5872,8 +6223,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const curEntry = getVectorCelEntryAt(state.currentFrame);
       const vOff = curEntry && curEntry.cel === cel ? getCelOffsetAtFrame(cel, curEntry.start, state.currentFrame) : { offsetX: cel.offsetX, offsetY: cel.offsetY };
       const pLocalPt = worldToTargetParentLocal(rootSc, target, `vector:${activeNudgeState.trackId}`, state.currentFrame, worldPt);
-      const piv = cel.rotation ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
-      const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0);
+      const sc = cel.scale ?? 1;
+      const piv = cel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
+      const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0, sc);
       const dx = localPt.x - activeNudgeState.startLocalPt.x;
       const dy = localPt.y - activeNudgeState.startLocalPt.y;
       if (Math.hypot(dx, dy) > 0.15) activeNudgeState.moved = true;
@@ -5894,8 +6246,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const curEntry = getCelEntryAt(state.currentFrame);
       const celOff = curEntry && curEntry.cel === cel ? getCelOffsetAtFrame(cel, curEntry.start, state.currentFrame) : { offsetX: cel.offsetX, offsetY: cel.offsetY };
       const pLocalPt = worldToTargetParentLocal(rootSc, target, getLayerKeyForActive(target), state.currentFrame, worldPt);
-      const piv = cel.rotation ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
-      const curLocalPt = worldToLayerLocal(pLocalPt, celOff.offsetX, celOff.offsetY, piv.ox, piv.oy, cel.rotation || 0);
+      const sc = cel.scale ?? 1;
+      const piv = cel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
+      const curLocalPt = worldToLayerLocal(pLocalPt, celOff.offsetX, celOff.offsetY, piv.ox, piv.oy, cel.rotation || 0, sc);
       const dx = curLocalPt.x - activeBitmapNudgeState.lastLocalPt.x;
       const dy = curLocalPt.y - activeBitmapNudgeState.lastLocalPt.y;
       const dist = Math.hypot(dx, dy);
@@ -6008,10 +6361,12 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           const oldOx = typeof obj.originX === 'number' ? obj.originX : moveCamState.startOx;
           const oldOy = typeof obj.originY === 'number' ? obj.originY : moveCamState.startOy;
           const rot = obj.rotation || 0;
+          const sc = obj.scale ?? 1;
+          const invSc = sc !== 0 ? 1 / sc : 1;
           const c = rot ? Math.cos(-rot) : 1;
           const s = rot ? Math.sin(-rot) : 0;
-          const dlx = pDelta.x * c - pDelta.y * s;
-          const dly = pDelta.x * s + pDelta.y * c;
+          const dlx = (pDelta.x * c - pDelta.y * s) * invSc;
+          const dly = (pDelta.x * s + pDelta.y * c) * invSc;
           const newOx = Math.round((moveCamState.startOx + dlx) * 10) / 10;
           const newOy = Math.round((moveCamState.startOy + dly) * 10) / 10;
           applyLayerOriginChange(moveCamState.layer, obj, oldOx, oldOy, newOx, newOy);
@@ -6070,6 +6425,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         updateMouthWidget();
         updateStageBadge();
         renderTimeline();
+        renderStage();
+      } else if (moveCamState.mode === 'scaleLayer') {
+        const factor = Math.exp((dx - dy) * 0.005);
+        const rawNext = Math.max(0.05, Math.min(10, moveCamState.startScale * factor));
+        const snappedNext = Math.abs(rawNext - 1) < 0.004 ? 1 : Math.round(rawNext * 1000) / 1000;
+        if (Math.abs(snappedNext - moveCamState.startScale) > 0.002) moveCamState.moved = true;
+        moveCamState.targetObj.scale = snappedNext;
+        updateStageBadge();
         renderStage();
       } else if (moveCamState.mode === 'moveMouth') {
         const dWorldX = dx / moveCamState.totalScale;
@@ -6176,8 +6539,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const curVec = getVectorCelEntryAt(state.currentFrame);
       const vOff = curVec && curVec.cel === vCel ? getCelOffsetAtFrame(vCel, curVec.start, state.currentFrame) : { offsetX: vCel.offsetX, offsetY: vCel.offsetY };
       const pLocalPt = worldToTargetParentLocal(rootSc, target, `vector:${state.activeVectorTrack.id}`, state.currentFrame, worldPt);
-      const piv = vCel.rotation ? getLayerPivotLocal(rootSc, 'vector', vCel) : { ox: 0, oy: 0 };
-      const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, vCel.rotation || 0);
+      const sc = vCel.scale ?? 1;
+      const piv = vCel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', vCel) : { ox: 0, oy: 0 };
+      const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, vCel.rotation || 0, sc);
       const pts = activeDrawVector.item.points;
       const prev = pts[pts.length - 1];
       if (!prev || Math.hypot(localPt.x - prev.x, localPt.y - prev.y) >= 0.4) {
@@ -6216,7 +6580,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             : { offsetX: activeDrawTarget.offsetX, offsetY: activeDrawTarget.offsetY };
           const pLast = worldToTargetParentLocal(rootSc, target, drawKey, state.currentFrame, lastWorldPt);
           const pCur = worldToTargetParentLocal(rootSc, target, drawKey, state.currentFrame, worldPt);
-          const piv = activeDrawTarget.rotation
+          const sc = activeDrawTarget.scale ?? 1;
+          const piv = activeDrawTarget.rotation || sc !== 1
             ? getLayerPivotLocal(rootSc, layerType, activeDrawTarget)
             : { ox: 0, oy: 0 };
           const p1 = worldToLayerLocal(
@@ -6225,7 +6590,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             off.offsetY,
             piv.ox,
             piv.oy,
-            activeDrawTarget.rotation || 0
+            activeDrawTarget.rotation || 0,
+            sc
           );
           const p2 = worldToLayerLocal(
             pCur,
@@ -6233,7 +6599,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             off.offsetY,
             piv.ox,
             piv.oy,
-            activeDrawTarget.rotation || 0
+            activeDrawTarget.rotation || 0,
+            sc
           );
           drawPixelLine(cctx, p1, p2, state.brushSize, state.brushColor, eraseMode);
           activeDrawTarget.hasInk = true;
@@ -6252,7 +6619,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (moveCamState && (moveCamState.mode === 'moveFrame' || moveCamState.mode === 'moveVector') && !moveCamState.moved) {
       moveCamState.cel.undoStack.pop();
     }
-    if (moveCamState && (moveCamState.mode === 'moveOrigin' || moveCamState.mode === 'rotateLayer') && !moveCamState.moved) {
+    if (moveCamState && (moveCamState.mode === 'moveOrigin' || moveCamState.mode === 'rotateLayer' || moveCamState.mode === 'scaleLayer') && !moveCamState.moved) {
       if (moveCamState.layer === 'mouth') {
         mouthUndoStacks.get(moveCamState.mouthLayer || state.mouthLayer)?.pop();
       } else if (moveCamState.targetObj) {
@@ -6299,7 +6666,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const worldPt = stageToWorld(stagePt, cam);
     const inv = 1 / (getTotalViewScale() * (cam.scale / 100));
 
-    if (state.tool === 'moveCam') {
+    if (state.tool === 'moveCam' && state.showOriginPoint) {
       const rootSc = activeScene();
       const gizmo = getActiveLayerGizmoInfo(rootSc, state.currentFrame, inv);
       if (gizmo) {
@@ -8330,6 +8697,107 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     origTrimEnd: number;
   } | null = null;
 
+  let audioLayerDragState: {
+    dragTrackId: string;
+    labelEl: HTMLDivElement;
+    startY: number;
+    started: boolean;
+    dropTargetTrackId: string | null;
+    dropPos: 'above' | 'below';
+  } | null = null;
+  let lastAudioLayerDragEndTime = 0;
+
+  function clearAudioLayerDragDropIndicators(): void {
+    audioLabelsContainer.querySelectorAll('.layer-dragging, .drop-above, .drop-below').forEach((el) => {
+      el.classList.remove('layer-dragging', 'drop-above', 'drop-below');
+    });
+  }
+
+  window.addEventListener(
+    'pointermove',
+    (e) => {
+      if (!audioLayerDragState) return;
+      if (!audioLayerDragState.started) {
+        if (Math.abs(e.clientY - audioLayerDragState.startY) <= 5) return;
+        audioLayerDragState.started = true;
+        audioLayerDragState.labelEl.classList.add('layer-dragging');
+        document.body.style.cursor = 'grabbing';
+      }
+
+      clearAudioLayerDragDropIndicators();
+      audioLayerDragState.labelEl.classList.add('layer-dragging');
+
+      const sc = activeScene();
+      const visibleEntries: Array<{ id: string; el: HTMLElement; rect: DOMRect }> = [];
+      for (const trk of sc.audioTracks) {
+        const dom = audioTrackDomMap.get(trk.id);
+        if (!dom || dom.labelEl.classList.contains('hidden-track')) continue;
+        visibleEntries.push({ id: trk.id, el: dom.labelEl, rect: dom.labelEl.getBoundingClientRect() });
+      }
+
+      let nextDropId: string | null = null;
+      let nextDropPos: 'above' | 'below' = 'above';
+      for (const item of visibleEntries) {
+        if (item.id === audioLayerDragState.dragTrackId) continue;
+        if (e.clientY >= item.rect.top && e.clientY <= item.rect.bottom) {
+          nextDropId = item.id;
+          nextDropPos = e.clientY < item.rect.top + item.rect.height / 2 ? 'above' : 'below';
+          break;
+        }
+      }
+
+      if (!nextDropId && visibleEntries.length > 0) {
+        const first = visibleEntries[0];
+        const last = visibleEntries[visibleEntries.length - 1];
+        if (e.clientY < first.rect.top && first.id !== audioLayerDragState.dragTrackId) {
+          nextDropId = first.id;
+          nextDropPos = 'above';
+        } else if (e.clientY > last.rect.bottom && last.id !== audioLayerDragState.dragTrackId) {
+          nextDropId = last.id;
+          nextDropPos = 'below';
+        }
+      }
+
+      audioLayerDragState.dropTargetTrackId = nextDropId;
+      audioLayerDragState.dropPos = nextDropPos;
+      if (nextDropId) {
+        audioTrackDomMap.get(nextDropId)?.labelEl.classList.add(nextDropPos === 'above' ? 'drop-above' : 'drop-below');
+      }
+    },
+    { signal }
+  );
+
+  const finishAudioLayerDrag = () => {
+    if (!audioLayerDragState) return;
+    const ds = audioLayerDragState;
+    audioLayerDragState = null;
+    clearAudioLayerDragDropIndicators();
+    document.body.style.cursor = '';
+
+    if (!ds.started) return;
+    lastAudioLayerDragEndTime = performance.now();
+
+    if (!ds.dropTargetTrackId || ds.dropTargetTrackId === ds.dragTrackId) return;
+    const sc = activeScene();
+    const fromIdx = sc.audioTracks.findIndex((t) => t.id === ds.dragTrackId);
+    if (fromIdx < 0) return;
+    const [moved] = sc.audioTracks.splice(fromIdx, 1);
+    const toIdx = sc.audioTracks.findIndex((t) => t.id === ds.dropTargetTrackId);
+    if (toIdx < 0) {
+      sc.audioTracks.splice(fromIdx, 0, moved);
+      return;
+    }
+    const insertIdx = ds.dropPos === 'above' ? toIdx : toIdx + 1;
+    sc.audioTracks.splice(insertIdx, 0, moved);
+
+    syncAudioTrackContainers();
+    updateActiveTrackHighlight();
+    renderAudioTrack();
+  };
+
+  window.addEventListener('pointerup', finishAudioLayerDrag, { signal });
+  window.addEventListener('pointercancel', finishAudioLayerDrag, { signal });
+
   function getAudioContext(): AudioContext {
     if (!audioCtx) {
       const AC =
@@ -8364,7 +8832,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         dom.volFillEl.style.width = `${pct}%`;
         dom.volFillEl.classList.toggle('empty', pct <= 0);
         dom.volFillEl.classList.toggle('full', pct >= 100);
-        dom.labelEl.title = `Scroll wheel here to adjust ${trk.name} volume (${pct}%)`;
+        dom.labelEl.title = `Drag up/down to reorder • Scroll wheel here to adjust ${trk.name} volume (${pct}%)`;
         dom.btnMute.textContent = trk.clip?.muted || trk.muted || pct === 0 ? '🔇' : '🔊';
       }
     }
@@ -8621,7 +9089,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (sc.audioTracks.length === 0) getActiveAudioTrackInScene(sc);
     const tracks = sc.audioTracks;
 
-    if (!audioDragState) {
+    if (!audioDragState && !audioLayerDragState) {
       const idSet = new Set(tracks.map((t) => t.id));
       const idsMatch =
         renderedAudioTrackIds.length === tracks.length &&
@@ -8642,7 +9110,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
           const labelEl = document.createElement('div');
           labelEl.className = 'track-label audio-track-label' + (state.showAudioTrack ? '' : ' hidden-track');
-          labelEl.title = `Scroll wheel here to adjust ${trk.name} volume`;
+          labelEl.title = `Drag up/down to reorder • Scroll wheel here to adjust ${trk.name} volume`;
 
           const volFillEl = document.createElement('div');
           volFillEl.className = 'audio-vol-fill full';
@@ -8714,8 +9182,22 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           btnGroup.append(btnAdd, btnRec, btnMute, btnRemove);
           labelEl.append(volFillEl, tagSpan, btnGroup);
 
+          labelEl.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            if ((e.target as HTMLElement)?.closest('button, input, select')) return;
+            audioLayerDragState = {
+              dragTrackId: trackId,
+              labelEl,
+              startY: e.clientY,
+              started: false,
+              dropTargetTrackId: null,
+              dropPos: 'above',
+            };
+          });
+
           labelEl.onclick = (e) => {
             if ((e.target as HTMLElement)?.closest('button, input, select')) return;
+            if (performance.now() - lastAudioLayerDragEndTime < 220) return;
             selectAudioTrack(trackId);
           };
 
@@ -9845,12 +10327,17 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     let toolLabel = state.tool.toUpperCase();
     if (state.tool === 'moveCam') {
       const gz = getActiveLayerGizmoInfo(activeScene(), state.currentFrame, 1);
+      const deg = gz ? Math.round((gz.rotation * 180) / Math.PI) : 0;
+      const scPct = gz ? Math.round(gz.scale * 100) : 100;
       if (moveCamState?.mode === 'rotateLayer' && gz) {
-        const deg = Math.round((gz.rotation * 180) / Math.PI);
         toolLabel = `ROTATE (${deg}°)`;
-      } else if (gz && Math.abs(gz.rotation) > 0.005) {
-        const deg = Math.round((gz.rotation * 180) / Math.PI);
-        toolLabel = `MOVE / CAM (${deg}°)`;
+      } else if (moveCamState?.mode === 'scaleLayer' && gz) {
+        toolLabel = `SCALE (${scPct}%)`;
+      } else if (gz && (Math.abs(gz.rotation) > 0.005 || Math.abs(gz.scale - 1) > 0.005)) {
+        const parts: string[] = [];
+        if (Math.abs(gz.rotation) > 0.005) parts.push(`${deg}°`);
+        if (Math.abs(gz.scale - 1) > 0.005) parts.push(`${scPct}%`);
+        toolLabel = `MOVE / CAM (${parts.join(' ')})`;
       } else {
         toolLabel = 'MOVE / CAM';
       }
@@ -10308,16 +10795,17 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         const sx = off.offsetX;
         const sy = off.offsetY;
         const rot = subVCel.cel.rotation || 0;
-        const piv = rot ? getLayerPivotLocal(rootSc, 'vector', subVCel.cel) : { ox: 0, oy: 0 };
+        const subSc = subVCel.cel.scale ?? 1;
+        const piv = rot || subSc !== 1 ? getLayerPivotLocal(rootSc, 'vector', subVCel.cel) : { ox: 0, oy: 0 };
         const c = Math.cos(rot);
         const s = Math.sin(rot);
         const xform = (p: Point2D) => {
-          if (!rot) {
+          if (!rot && subSc === 1) {
             p.x += sx;
             p.y += sy;
           } else {
-            const dx = p.x - piv.ox;
-            const dy = p.y - piv.oy;
+            const dx = (p.x - piv.ox) * subSc;
+            const dy = (p.y - piv.oy) * subSc;
             p.x = sx + piv.ox + dx * c - dy * s;
             p.y = sy + piv.oy + dx * s + dy * c;
           }
@@ -10783,12 +11271,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         vCel.offsetY = entry.offsetY;
         vCel.posKeys = clonePosKeys(entry.posKeys);
         vCel.rotation = entry.rotation;
+        vCel.scale = entry.scale;
         vCel.originX = entry.originX;
         vCel.originY = entry.originY;
       } else if (entry.type === 'move') {
         vCel.offsetX = entry.offsetX;
         vCel.offsetY = entry.offsetY;
         vCel.rotation = entry.rotation;
+        vCel.scale = entry.scale;
         vCel.originX = entry.originX;
         vCel.originY = entry.originY;
       } else {
@@ -10798,6 +11288,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         vCel.offsetY = entry.offsetY;
         vCel.posKeys = clonePosKeys(entry.posKeys);
         vCel.rotation = entry.rotation;
+        vCel.scale = entry.scale;
         vCel.originX = entry.originX;
         vCel.originY = entry.originY;
       }
@@ -10858,6 +11349,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       layerObj.offsetY = entry.offsetY;
       layerObj.posKeys = clonePosKeys(entry.posKeys);
       layerObj.rotation = entry.rotation;
+      layerObj.scale = entry.scale;
       layerObj.originX = entry.originX;
       layerObj.originY = entry.originY;
       renderTimeline();
@@ -10865,6 +11357,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       layerObj.offsetX = entry.offsetX;
       layerObj.offsetY = entry.offsetY;
       layerObj.rotation = entry.rotation;
+      layerObj.scale = entry.scale;
       layerObj.originX = entry.originX;
       layerObj.originY = entry.originY;
     } else if (entry.type === 'pixels') {
@@ -10898,6 +11391,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         delete existing.cel.originX;
         delete existing.cel.originY;
         delete existing.cel.rotation;
+        delete existing.cel.scale;
         delete existing.cel.posKeys;
         delete existing.cel.nestId;
         delete existing.cel.nestOriginFrame;
@@ -10911,6 +11405,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             existing.cel.originX = prev.cel.originX;
             existing.cel.originY = prev.cel.originY;
             existing.cel.rotation = prev.cel.rotation;
+            existing.cel.scale = prev.cel.scale;
             existing.cel.hasInk = prev.cel.hasInk;
             existing.cel.nestId = prev.cel.nestId;
             existing.cel.nestOriginFrame = prev.cel.nestOriginFrame;
@@ -10947,6 +11442,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         let originX: number | undefined;
         let originY: number | undefined;
         let rotation: number | undefined;
+        let scale: number | undefined;
         let hasInk = false;
         let posKeys: CelPosKey[] | undefined;
         let nestId: string | undefined;
@@ -10958,6 +11454,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           originX = existing.cel.originX;
           originY = existing.cel.originY;
           rotation = existing.cel.rotation;
+          scale = existing.cel.scale;
           hasInk = existing.cel.hasInk;
           nestId = existing.cel.nestId;
           nestOriginFrame = existing.cel.nestOriginFrame;
@@ -10978,6 +11475,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           originX,
           originY,
           rotation,
+          scale,
           posKeys,
           nestId,
           nestOriginFrame,
@@ -11001,6 +11499,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         delete existing.cel.originX;
         delete existing.cel.originY;
         delete existing.cel.rotation;
+        delete existing.cel.scale;
         delete existing.cel.posKeys;
         delete existing.cel.nestId;
         delete existing.cel.nestOriginFrame;
@@ -11015,6 +11514,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             existing.cel.originX = prev.cel.originX;
             existing.cel.originY = prev.cel.originY;
             existing.cel.rotation = prev.cel.rotation;
+            existing.cel.scale = prev.cel.scale;
             existing.cel.hasInk = prev.cel.hasInk;
             existing.cel.nestId = prev.cel.nestId;
             existing.cel.nestOriginFrame = prev.cel.nestOriginFrame;
@@ -11051,6 +11551,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         let originX: number | undefined;
         let originY: number | undefined;
         let rotation: number | undefined;
+        let scale: number | undefined;
         let hasInk = false;
         let posKeys: CelPosKey[] | undefined;
         let nestId: string | undefined;
@@ -11063,6 +11564,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           originX = existing.cel.originX;
           originY = existing.cel.originY;
           rotation = existing.cel.rotation;
+          scale = existing.cel.scale;
           hasInk = existing.cel.hasInk;
           nestId = existing.cel.nestId;
           nestOriginFrame = existing.cel.nestOriginFrame;
@@ -11083,6 +11585,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           originX,
           originY,
           rotation,
+          scale,
           posKeys,
           nestId,
           nestOriginFrame,
@@ -11191,6 +11694,19 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     btnOnionAfter.classList.toggle('active', state.onionAfter);
     renderStage();
   };
+
+  function updateOriginPointBtnUI(): void {
+    btnOriginPoint.classList.toggle('active', state.showOriginPoint);
+    btnOriginPointText.textContent = state.showOriginPoint ? 'Origin: On' : 'Origin: Off';
+  }
+
+  btnOriginPoint.onclick = () => {
+    state.showOriginPoint = !state.showOriginPoint;
+    if (!state.showOriginPoint) hoverOriginGizmoPart = null;
+    updateOriginPointBtnUI();
+    renderStage();
+  };
+  updateOriginPointBtnUI();
 
   btnVectorPixelPreview.onclick = () => {
     state.vectorPixelPreview = !state.vectorPixelPreview;
@@ -11441,6 +11957,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           originX: cel.originX,
           originY: cel.originY,
           rotation: cel.rotation,
+          scale: cel.scale,
           posKeys: clonePosKeys(cel.posKeys),
           nestId: cel.nestId,
           nestOriginFrame: cel.nestOriginFrame,
@@ -11462,6 +11979,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           originX: vCel.originX,
           originY: vCel.originY,
           rotation: vCel.rotation,
+          scale: vCel.scale,
           posKeys: clonePosKeys(vCel.posKeys),
           nestId: vCel.nestId,
           nestOriginFrame: vCel.nestOriginFrame,
@@ -11532,6 +12050,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         originX: bg.originX,
         originY: bg.originY,
         rotation: bg.rotation,
+        scale: bg.scale,
       };
     });
     copy.activeBgLayerId = src.activeBgLayerId;
@@ -11850,6 +12369,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     originX?: number;
     originY?: number;
     rotation?: number;
+    scale?: number;
     posKeys?: CelPosKey[];
     nestId?: string;
     nestOriginFrame?: number;
@@ -11867,6 +12387,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     originX?: number;
     originY?: number;
     rotation?: number;
+    scale?: number;
     posKeys?: CelPosKey[];
     nestId?: string;
     nestOriginFrame?: number;
@@ -11898,6 +12419,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     originX?: number;
     originY?: number;
     rotation?: number;
+    scale?: number;
     width?: number;
     height?: number;
     dataUrl: string | null;
@@ -11964,6 +12486,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         originX: cel.originX,
         originY: cel.originY,
         rotation: cel.rotation,
+        scale: cel.scale,
         posKeys: clonePosKeys(cel.posKeys),
         nestId: cel.nestId,
         nestOriginFrame: cel.nestOriginFrame,
@@ -11996,6 +12519,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         originX: vCel.originX,
         originY: vCel.originY,
         rotation: vCel.rotation,
+        scale: vCel.scale,
         posKeys: clonePosKeys(vCel.posKeys),
         nestId: vCel.nestId,
         nestOriginFrame: vCel.nestOriginFrame,
@@ -12027,6 +12551,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         originX: item.originX,
         originY: item.originY,
         rotation: item.rotation,
+        scale: item.scale,
         posKeys: clonePosKeys(item.posKeys),
         nestId: item.nestId,
         nestOriginFrame: item.nestOriginFrame,
@@ -12090,6 +12615,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         originX: vItem.originX,
         originY: vItem.originY,
         rotation: vItem.rotation,
+        scale: vItem.scale,
         posKeys: clonePosKeys(vItem.posKeys),
         nestId: vItem.nestId,
         nestOriginFrame: vItem.nestOriginFrame,
@@ -12158,6 +12684,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         originX: bg.originX,
         originY: bg.originY,
         rotation: bg.rotation,
+        scale: bg.scale,
         width: bg.canvas.width,
         height: bg.canvas.height,
         dataUrl: bg.hasInk ? bg.canvas.toDataURL('image/png') : null,
@@ -12191,6 +12718,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     bg.originX = rawBg.originX;
     bg.originY = rawBg.originY;
     bg.rotation = rawBg.rotation;
+    bg.scale = rawBg.scale;
     bg.canvas = createCelCanvas(rawBg.width || WORLD_W, rawBg.height || WORLD_H);
     if (rawBg.dataUrl) {
       const dataUrl = rawBg.dataUrl;

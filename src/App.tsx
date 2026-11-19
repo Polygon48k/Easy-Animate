@@ -64,6 +64,13 @@ export default function App() {
             <button id="btnOnionAfter" className="mini-btn" title="Show 1 Frame After">Next</button>
           </div>
           <button
+            id="btnOriginPoint"
+            title="Show/Hide Orange Origin Point (Pivot &amp; Rotate)"
+          >
+            <span className="origin-btn-dot" aria-hidden="true" />
+            <span id="btnOriginPointText">Origin: Off</span>
+          </button>
+          <button
             id="btnVectorPixelPreview"
             className="hidden-nest-ui"
             title="Pixelate Vector layer to canvas resolution using nearest-neighbor preview"
@@ -132,7 +139,7 @@ export default function App() {
                   <span>Fill</span>
                 </button>
 
-                <button className="tool-btn" data-tool="moveCam" title="Move / Rotate Layer (M / R) — Drag orange circle for pivot, drag handle to rotate (Shift snaps 15°) / Right-drag Zoom Cam">
+                <button className="tool-btn" data-tool="moveCam" title="Move / Scale / Rotate Layer (M / R) — Drag to move, Right-drag to scale content, Shift+drag to pan camera (enable Origin to pivot/rotate)">
                   <svg viewBox="0 0 24 24">
                     <path d="M5 9l-3 3 3 3" />
                     <path d="M9 5l3-3 3 3" />
@@ -276,9 +283,9 @@ export default function App() {
               </div>
 
               <div className="hint">
-                <strong>View Zoom:</strong> Scroll wheel<br />
+                <strong>View Zoom:</strong> Scroll / Pinch<br />
                 <strong>View Pan:</strong> Middle-mouse drag<br />
-                <strong>Cam Zoom:</strong> Right-drag (Move)<br />
+                <strong>Layer Scale:</strong> Right-drag (Move)<br />
                 <strong>Cam Pan:</strong> Shift+drag (Move)
               </div>
             </div>
