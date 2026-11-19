@@ -742,6 +742,9 @@ canvas#stage {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 5px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .mouth-slot {

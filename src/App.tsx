@@ -59,6 +59,10 @@ export default function App() {
           >
             Pixelate: Off
           </button>
+          <div id="vectorPointModeGroup" className="studio-seg hidden-nest-ui" title="Switch selected vector point between sharp Corners and smooth Curves">
+            <button id="btnVectorCorner" type="button" title="Sharp corner vertex">Corners</button>
+            <button id="btnVectorCurve" type="button" className="active" title="Smooth curved vertex">Curves</button>
+          </div>
         </div>
 
         <div className="toolbar-group">
@@ -147,6 +151,22 @@ export default function App() {
                   </svg>
                   <span>Nudge</span>
                 </button>
+
+                <button
+                  id="btnToolVectorEdit"
+                  className="tool-btn hidden-tool"
+                  data-tool="vectorEdit"
+                  title="Edit Vector Points (V) — Select and move individual vector points, switch between Corners and Curves"
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M4 18C7 9 17 9 20 18" />
+                    <rect x="2.5" y="16.5" width="3" height="3" rx="0.5" />
+                    <circle cx="12" cy="10" r="2.3" />
+                    <rect x="18.5" y="16.5" width="3" height="3" rx="0.5" />
+                    <path d="M12 4v3.5" />
+                  </svg>
+                  <span>Edit</span>
+                </button>
               </div>
             </div>
 
@@ -186,38 +206,39 @@ export default function App() {
               </div>
             </div>
 
-            {/* Framed Viseme Switcher Widget (Appears when Mouth Layer is On) */}
+            {/* Framed Shape Switcher Widget (Appears when Picker Layer is On) */}
             <div className="mouth-widget" id="mouthWidget">
               <div className="mouth-sheet-pop" id="mouthSheetPop">
-                <div className="flex items-center justify-between">
-                  <strong className="text-[11px] font-semibold">Viseme Shapes</strong>
+                <div className="flex items-center justify-between gap-1">
+                  <strong className="text-[11px] font-semibold">Picker Shapes</strong>
                   <div className="flex gap-1">
-                    <button id="btnMouthClearShape" className="mini-btn danger" title="Clear current mouth shape to redraw">Clear</button>
+                    <button id="btnMouthAddShape" className="mini-btn primary" title="Add extra shape">+</button>
+                    <button id="btnMouthClearShape" className="mini-btn danger" title="Clear current shape to redraw">Clear</button>
                     <button id="btnMouthResetShape" className="mini-btn" title="Restore starter shape">Reset</button>
                     <button id="btnMouthClosePop" className="mini-btn">✕</button>
                   </div>
                 </div>
                 <div className="mouth-sheet-grid" id="mouthSheetGrid" />
-                <div className="hint">Click a shape to select it, then use <strong>Draw</strong> (or draw directly on stage) to customize.</div>
+                <div className="hint">Click a shape to select it, click <strong>+</strong> to add extra shapes, then use <strong>Draw</strong> (or draw directly on stage) to customize.</div>
               </div>
 
               <div className="mouth-cycler">
-                <button id="btnMouthPrev" className="mouth-arrow-btn" title="Previous Mouth Viseme">◀</button>
-                <div className="mouth-frame-box" id="mouthFrameBox" title="Click to view/pick all mouth visemes">
+                <button id="btnMouthPrev" className="mouth-arrow-btn" title="Previous Picker Shape">◀</button>
+                <div className="mouth-frame-box" id="mouthFrameBox" title="Click to view/pick all shapes">
                   <canvas id="mouthPreviewCanvas" width={160} height={120} />
                   <span className="mouth-frame-label" id="mouthFrameLabel">Rest</span>
                 </div>
-                <button id="btnMouthNext" className="mouth-arrow-btn" title="Next Mouth Viseme">▶</button>
+                <button id="btnMouthNext" className="mouth-arrow-btn" title="Next Picker Shape">▶</button>
               </div>
               <div className="mouth-widget-actions">
                 <button id="btnMouthDraw" className="mini-btn flex-1 justify-center" title="Draw replacement directly on stage">Draw</button>
-                <button id="btnMouthMove" className="mini-btn flex-1 justify-center" title="Left-drag to move mouth, Right-drag to scale mouth layer">Move</button>
-                <button id="btnMouthAll" className="mini-btn" title="All Viseme Shapes">Shapes</button>
+                <button id="btnMouthMove" className="mini-btn flex-1 justify-center" title="Left-drag to move picker, Right-drag to scale picker layer">Move</button>
+                <button id="btnMouthAll" className="mini-btn" title="All Picker Shapes">Shapes</button>
               </div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-semibold text-[#f9a8d4] truncate" id="mouthLayerNameBadge">Mouth 1</span>
+                <span className="text-[10px] font-semibold text-[#f9a8d4] truncate" id="mouthLayerNameBadge">Picker 1</span>
               </div>
-              <div className="mouth-scale-row" title="Scale only the mouth layer">
+              <div className="mouth-scale-row" title="Scale only the picker layer">
                 <label htmlFor="mouthScaleSlider">Scale</label>
                 <input type="range" id="mouthScaleSlider" min="20" max="500" defaultValue="100" />
                 <span id="mouthScaleVal">100%</span>
@@ -279,18 +300,15 @@ export default function App() {
         {/* Bottom Timeline */}
         <section className="timeline-panel" id="timelinePanel">
           <div className="timeline-header" id="timelineHeader" title="Drag up/down to resize timeline (double-click to reset)">
-            {/* Left: Track Toggles */}
+            {/* Left: Add Layers (Pro) / Audio Toggle (Basic) */}
             <div className="toolbar-group" id="editorLayerTrackGroup">
-              <button id="btnAddCelTrack" title="Add Another Bitmap Layer">+ Bitmap</button>
-              <button id="btnToggleVectorTrack" title="Show/Hide Vector Layers">Vector</button>
-              <button id="btnAddVectorTrack" className="hidden-nest-ui" title="Add Another Vector Layer">+ Vector</button>
-              <button id="btnToggleMouthTrack" title="Show/Hide Mouth Shapes Viseme Layers">Mouth</button>
-              <button id="btnAddMouthTrack" className="hidden-nest-ui" title="Add Another Mouth Layer">+ Mouth</button>
-              <button id="btnToggleBgTrack" title="Show/Hide Background Layers">Background</button>
-              <button id="btnAddBgTrack" className="hidden-nest-ui" title="Add Another Background Layer">+ Bg</button>
-              <button id="btnToggleAudioTrack" title="Show/Hide Audio Tracks">Audio</button>
-              <button id="btnAddAudioTrack" className="hidden-nest-ui" title="Add Another Audio Track">+ Audio</button>
-              <button id="btnToggleCamTrack" title="Show/Hide Camera Track &amp; Controls">Camera</button>
+              <button id="btnAddCelTrack" title="Add Bitmap Layer">+ Bitmap</button>
+              <button id="btnAddVectorTrack" title="Add Vector Layer">+ Vector</button>
+              <button id="btnAddMouthTrack" title="Add Picker Layer">+ Picker</button>
+              <button id="btnAddBgTrack" title="Add Background Layer">+ Background</button>
+              <button id="btnAddAudioTrack" title="Add Audio Layer">+ Audio</button>
+              <button id="btnAddCamTrack" title="Add Camera Layer (max 1)">+ Camera</button>
+              <button id="btnToggleAudioTrack" title="Show/Hide Sound Layer">Audio</button>
             </div>
 
             {/* Center: Playback Controls */}
@@ -419,16 +437,16 @@ export default function App() {
         <button id="ctxClear">Clear Drawing</button>
       </div>
 
-      {/* Right-Click Mouth Keyframe Context Menu */}
+      {/* Right-Click Picker Keyframe Context Menu */}
       <div className="context-menu" id="mouthContextMenu">
-        <button id="ctxMouthDelete" className="ctx-danger">Delete Mouth Key</button>
+        <button id="ctxMouthDelete" className="ctx-danger">Delete Picker Key</button>
         <button id="ctxMouthKey">+ Keyframe Here</button>
-        <button id="ctxMouthClearAll" className="ctx-danger">Clear All Mouth Keys</button>
+        <button id="ctxMouthClearAll" className="ctx-danger">Clear All Picker Keys</button>
       </div>
 
       {/* Right-Click Audio Context Menu */}
       <div className="context-menu" id="audioContextMenu">
-        <button id="ctxAudioAutoLipSync">Auto Lip-Sync Mouth</button>
+        <button id="ctxAudioAutoLipSync">Auto Lip-Sync Picker</button>
         <button id="ctxAudioFit">Fit Timeline to Audio</button>
         <button id="ctxAudioMute">Mute / Unmute</button>
         <button id="ctxAudioDelete" className="ctx-danger">Delete Audio Clip</button>
