@@ -21,6 +21,7 @@ export interface CelPosKey {
   relFrame: number;
   offsetX: number;
   offsetY: number;
+  scale?: number;
   ctrlDx?: number;
   ctrlDy?: number;
 }
@@ -398,7 +399,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   function makeScene(name: string): Scene {
     const firstCelTrack = createCelTrack('Bitmap 1', true);
-    const firstVectorTrack = createVectorTrack('Vector 1', true);
+    const firstVectorTrack = createVectorTrack('Draw', true);
     const firstBgLayer = createBgLayer('Background 1', false);
     const firstMouthLayer = createMouthLayer('Mouth 1', false);
     const firstAudioTrack = createAudioTrack('Audio 1');
@@ -431,7 +432,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   const app = {
-    mode: 'editor' as 'editor' | 'scenes',
+    mode: 'basic' as 'basic' | 'pro' | 'scenes',
+    lastEditorMode: 'basic' as 'basic' | 'pro',
     fps: 12,
     loop: true,
     scenes: [makeScene('Scene 1')],
@@ -441,6 +443,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     scenesBoardZoomPx: 220,
   };
   app.activeSceneId = app.scenes[0].id;
+  const isBasicMode = (): boolean => app.mode === 'basic';
 
   function activeScene(): Scene {
     return app.scenes.find((s) => s.id === app.activeSceneId) || app.scenes[0];
@@ -489,7 +492,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   function getActiveVectorTrackInTarget(target: Scene | NestedClip): VectorTrack {
     if (target.vectorTracks.length === 0) {
-      const trk = createVectorTrack('Vector 1', true);
+      const trk = createVectorTrack('Draw', true);
       target.vectorTracks.push(trk);
       target.activeVectorTrackId = trk.id;
       return trk;
@@ -539,16 +542,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     return sc.audioTracks[0];
   }
 
-  const state = {
-    isPlaying: false,
-    onionSkin: false,
-    onionBefore: true,
-    onionAfter: false,
-    showCelLayer: true,
-    showVectorLayer: true,
+  const proPrefs = {
     vectorPixelPreview: false,
     showOriginPoint: false,
-    applyCamera: true,
+    onionBefore: true,
+    onionAfter: false,
     showVectorTrack: false,
     showBgTrack: false,
     showMouthTrack: false,
@@ -556,6 +554,25 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     showCamTrack: false,
     activeLayer: 'cel' as 'cel' | 'vector' | 'bg' | 'mouth',
     selectedTrack: 'cel' as 'cel' | 'vector' | 'audio' | 'mouth' | 'bg' | 'cam',
+  };
+
+  const state = {
+    isPlaying: false,
+    onionSkin: false,
+    onionBefore: true,
+    onionAfter: false,
+    showCelLayer: true,
+    showVectorLayer: true,
+    vectorPixelPreview: true,
+    showOriginPoint: false,
+    applyCamera: true,
+    showVectorTrack: true,
+    showBgTrack: false,
+    showMouthTrack: false,
+    showAudioTrack: true,
+    showCamTrack: false,
+    activeLayer: 'vector' as 'cel' | 'vector' | 'bg' | 'mouth',
+    selectedTrack: 'vector' as 'cel' | 'vector' | 'audio' | 'mouth' | 'bg' | 'cam',
 
     tool: 'brush' as 'brush' | 'eraser' | 'fill' | 'moveCam' | 'nudge',
     brushColor: '#000000',
@@ -639,10 +656,15 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   // DOM References
   const editorView = mustEl<HTMLDivElement>('editorView');
   const scenesView = mustEl<HTMLDivElement>('scenesView');
-  const btnModeEditor = mustEl<HTMLButtonElement>('btnModeEditor');
+  const btnModeBasic = mustEl<HTMLButtonElement>('btnModeBasic');
+  const btnModePro = mustEl<HTMLButtonElement>('btnModePro');
   const btnModeScenes = mustEl<HTMLButtonElement>('btnModeScenes');
   const activeSceneLabel = mustEl<HTMLSpanElement>('activeSceneLabel');
   const editorOnionGroup = mustEl<HTMLDivElement>('editorOnionGroup');
+  const brushSizeBox = mustEl<HTMLDivElement>('brushSizeBox');
+  const closeFillBox = mustEl<HTMLDivElement>('closeFillBox');
+  const editorLayerTrackGroup = mustEl<HTMLDivElement>('editorLayerTrackGroup');
+  const fpsSelect = mustEl<HTMLSelectElement>('fpsSelect');
 
   const stageContainer = mustEl<HTMLElement>('stageContainer');
   const stage = mustEl<HTMLCanvasElement>('stage');
@@ -686,8 +708,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   const ctxExitNest = mustEl<HTMLButtonElement>('ctxExitNest');
   const ctxUnnest = mustEl<HTMLButtonElement>('ctxUnnest');
   const ctxClearTween = mustEl<HTMLButtonElement>('ctxClearTween');
+  const ctxNestTweenDivider = mustEl<HTMLDivElement>('ctxNestTweenDivider');
   const mouthContextMenu = mustEl<HTMLDivElement>('mouthContextMenu');
   const audioContextMenu = mustEl<HTMLDivElement>('audioContextMenu');
+  const ctxAudioAutoLipSync = mustEl<HTMLButtonElement>('ctxAudioAutoLipSync');
   const ctxAudioDeleteTrack = mustEl<HTMLButtonElement>('ctxAudioDeleteTrack');
   const camContextMenu = mustEl<HTMLDivElement>('camContextMenu');
   const layerContextMenu = mustEl<HTMLDivElement>('layerContextMenu');
@@ -740,29 +764,132 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   const btnScenesLoop = mustEl<HTMLButtonElement>('btnScenesLoop');
 
   // ==========================================
-  // Page Mode Switching (Editor <-> Scenes)
+  // Page Mode Switching (Basic <-> Pro <-> Scenes)
   // ==========================================
-  function switchToMode(mode: 'editor' | 'scenes'): void {
+  function saveProPrefs(): void {
+    proPrefs.vectorPixelPreview = state.vectorPixelPreview;
+    proPrefs.showOriginPoint = state.showOriginPoint;
+    proPrefs.onionBefore = state.onionBefore;
+    proPrefs.onionAfter = state.onionAfter;
+    proPrefs.showVectorTrack = state.showVectorTrack;
+    proPrefs.showBgTrack = state.showBgTrack;
+    proPrefs.showMouthTrack = state.showMouthTrack;
+    proPrefs.showAudioTrack = state.showAudioTrack;
+    proPrefs.showCamTrack = state.showCamTrack;
+    proPrefs.activeLayer = state.activeLayer;
+    proPrefs.selectedTrack = state.selectedTrack;
+  }
+
+  function applyEditorTierUI(): void {
+    const basic = isBasicMode();
+    mustEl<HTMLButtonElement>('btnOnionBefore').classList.toggle('hidden-nest-ui', basic);
+    mustEl<HTMLButtonElement>('btnOnionAfter').classList.toggle('hidden-nest-ui', basic);
+    mustEl<HTMLButtonElement>('btnOnionBefore').classList.toggle('active', state.onionBefore);
+    mustEl<HTMLButtonElement>('btnOnionAfter').classList.toggle('active', state.onionAfter);
+
+    btnOriginPoint.classList.toggle('hidden-nest-ui', basic);
+    btnOriginPoint.classList.toggle('active', state.showOriginPoint);
+    btnOriginPointText.textContent = state.showOriginPoint ? 'Origin: On' : 'Origin: Off';
+
+    btnVectorPixelPreview.textContent = `Pixelate: ${state.vectorPixelPreview ? 'On' : 'Off'}`;
+    btnVectorPixelPreview.classList.toggle('active', state.vectorPixelPreview);
+
+    brushSizeBox.classList.toggle('hidden-nest-ui', basic);
+    closeFillBox.classList.toggle('hidden-nest-ui', basic);
+    editorLayerTrackGroup.classList.toggle('hidden-nest-ui', basic);
+
+    fpsSelect.disabled = basic;
+    fpsSelect.title = basic ? 'Frame rate is locked in Basic mode (switch to Pro to change FPS)' : 'Frames Per Second';
+
+    if (basic) {
+      toggleCameraPanel(false);
+      mouthSheetPop.classList.remove('open');
+      camTrackLabel.classList.add('hidden-track');
+      camTrackRow.classList.add('hidden-track');
+      camTrackRight.classList.add('hidden-track');
+    } else {
+      mustEl<HTMLButtonElement>('btnToggleVectorTrack').classList.toggle('active', state.showVectorTrack);
+      btnAddVectorTrack.classList.toggle('hidden-nest-ui', !state.showVectorTrack);
+      mustEl<HTMLButtonElement>('btnToggleMouthTrack').classList.toggle('active', state.showMouthTrack);
+      btnAddMouthTrack.classList.toggle('hidden-nest-ui', !state.showMouthTrack || nestStack.length > 0);
+      mustEl<HTMLButtonElement>('btnToggleBgTrack').classList.toggle('active', state.showBgTrack);
+      btnAddBgTrack.classList.toggle('hidden-nest-ui', !state.showBgTrack || nestStack.length > 0);
+      mustEl<HTMLButtonElement>('btnToggleAudioTrack').classList.toggle('active', state.showAudioTrack);
+      btnAddAudioTrack.classList.toggle('hidden-nest-ui', !state.showAudioTrack || nestStack.length > 0);
+      mustEl<HTMLButtonElement>('btnToggleCamTrack').classList.toggle('active', state.showCamTrack);
+      camTrackLabel.classList.toggle('hidden-track', !state.showCamTrack);
+      camTrackRow.classList.toggle('hidden-track', !state.showCamTrack);
+      camTrackRight.classList.toggle('hidden-track', !state.showCamTrack);
+    }
+  }
+
+  function switchToMode(mode: 'basic' | 'pro' | 'scenes'): void {
+    const prevMode = app.mode;
+    if (prevMode === mode) return;
     if (state.isPlaying) togglePlay();
     if (app.scenesPlaying) toggleScenesPlay();
-    if (mode === 'scenes' && nestStack.length > 0) {
+    hideMenus();
+
+    if (prevMode === 'pro') {
+      saveProPrefs();
+    }
+    if (mode !== 'pro' && nestStack.length > 0) {
       exitAllNests(false);
     }
 
     app.mode = mode;
-    const isEditor = mode === 'editor';
+    if (mode === 'basic' || mode === 'pro') {
+      app.lastEditorMode = mode;
+    }
 
+    const sc = activeScene();
+    if (mode === 'basic') {
+      state.vectorPixelPreview = true;
+      state.showOriginPoint = false;
+      hoverOriginGizmoPart = null;
+      state.onionBefore = true;
+      state.onionAfter = false;
+      state.showVectorTrack = true;
+      state.showVectorLayer = true;
+      state.showAudioTrack = true;
+      if (sc.vectorTracks.length > 0) {
+        sc.activeVectorTrackId = sc.vectorTracks[0].id;
+        sc.vectorTracks[0].visible = true;
+      }
+      if (sc.audioTracks.length > 0) {
+        sc.activeAudioTrackId = sc.audioTracks[0].id;
+      }
+      state.activeLayer = 'vector';
+      state.selectedTrack = 'vector';
+    } else if (mode === 'pro' && prevMode !== 'scenes') {
+      state.vectorPixelPreview = proPrefs.vectorPixelPreview;
+      state.showOriginPoint = proPrefs.showOriginPoint;
+      if (!state.showOriginPoint) hoverOriginGizmoPart = null;
+      state.onionBefore = proPrefs.onionBefore;
+      state.onionAfter = proPrefs.onionAfter;
+      state.showVectorTrack = proPrefs.showVectorTrack;
+      state.showBgTrack = proPrefs.showBgTrack;
+      state.showMouthTrack = proPrefs.showMouthTrack;
+      state.showAudioTrack = proPrefs.showAudioTrack;
+      state.showCamTrack = proPrefs.showCamTrack;
+      state.activeLayer = proPrefs.activeLayer;
+      state.selectedTrack = proPrefs.selectedTrack;
+    }
+
+    const isEditor = mode !== 'scenes';
     editorView.classList.toggle('hidden-view', !isEditor);
     scenesView.classList.toggle('hidden-view', isEditor);
-    btnModeEditor.classList.toggle('active', isEditor);
-    btnModeScenes.classList.toggle('active', !isEditor);
+    btnModeBasic.classList.toggle('active', mode === 'basic');
+    btnModePro.classList.toggle('active', mode === 'pro');
+    btnModeScenes.classList.toggle('active', mode === 'scenes');
     editorOnionGroup.style.visibility = isEditor ? 'visible' : 'hidden';
 
     if (isEditor) {
-      loadSceneIntoEditorUI(activeScene());
+      loadSceneIntoEditorUI(sc);
       requestAnimationFrame(() => {
         resizeStageCanvas();
         renderTimeline();
+        renderAudioTrack();
         renderStage();
       });
     } else {
@@ -770,14 +897,15 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     }
   }
 
-  btnModeEditor.onclick = () => switchToMode('editor');
+  btnModeBasic.onclick = () => switchToMode('basic');
+  btnModePro.onclick = () => switchToMode('pro');
   btnModeScenes.onclick = () => switchToMode('scenes');
 
   function selectSceneForEditor(sceneId: string, jumpToEditor = false): void {
     exitAllNests(false);
     app.activeSceneId = sceneId;
     loadSceneIntoEditorUI(activeScene());
-    if (jumpToEditor) switchToMode('editor');
+    if (jumpToEditor) switchToMode(app.lastEditorMode);
     else renderScenesGrid();
   }
 
@@ -788,22 +916,39 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     state.audioVolume = activeAt.clip && typeof activeAt.clip.volume === 'number' ? activeAt.clip.volume : activeAt.volume;
     updateAudioVolumeUI();
 
-    const hasAudioContent = sc.audioTracks.length > 1 || sc.audioTracks.some((t) => Boolean(t.clip));
-    if (hasAudioContent && !state.showAudioTrack) toggleAudioTrack(true);
-    const hasBgContent = sc.bgLayers.length > 1 || sc.bgLayers.some((b) => b.hasInk);
-    if (hasBgContent && !state.showBgTrack) toggleBgTrack(true);
-    const hasMouthContent = sc.mouthLayers.length > 1 || sc.mouthLayers.some((m) => m.visible || m.keys.size > 0);
-    if (hasMouthContent && !state.showMouthTrack) toggleMouthTrack(true);
+    if (isBasicMode()) {
+      state.showVectorTrack = true;
+      state.showVectorLayer = true;
+      state.showAudioTrack = true;
+      if (sc.vectorTracks.length > 0) {
+        sc.activeVectorTrackId = sc.vectorTracks[0].id;
+        sc.vectorTracks[0].visible = true;
+      }
+      if (sc.audioTracks.length > 0) {
+        sc.activeAudioTrackId = sc.audioTracks[0].id;
+      }
+      state.activeLayer = 'vector';
+      if (state.selectedTrack !== 'audio') state.selectedTrack = 'vector';
+    } else {
+      const hasAudioContent = sc.audioTracks.length > 1 || sc.audioTracks.some((t) => Boolean(t.clip));
+      if (hasAudioContent && !state.showAudioTrack) toggleAudioTrack(true);
+      const hasBgContent = sc.bgLayers.length > 1 || sc.bgLayers.some((b) => b.hasInk);
+      if (hasBgContent && !state.showBgTrack) toggleBgTrack(true);
+      const hasMouthContent = sc.mouthLayers.length > 1 || sc.mouthLayers.some((m) => m.visible || m.keys.size > 0);
+      if (hasMouthContent && !state.showMouthTrack) toggleMouthTrack(true);
 
-    const hasVectorContent =
-      sc.vectorTracks.length > 1 ||
-      sc.vectorTracks.some(
-        (trk) =>
-          trk.cels.size > 1 ||
-          Array.from(trk.cels.values()).some((vc) => vc.hasInk || vc.items.length > 0 || Boolean(vc.nestId))
-      );
-    if (hasVectorContent && !state.showVectorTrack) toggleVectorTrack(true);
-    if (sc.cameraKeys.size > 0 && !state.showCamTrack) toggleCamTrack(true);
+      const hasVectorContent =
+        sc.vectorTracks.length > 1 ||
+        sc.vectorTracks.some(
+          (trk) =>
+            trk.cels.size > 1 ||
+            Array.from(trk.cels.values()).some((vc) => vc.hasInk || vc.items.length > 0 || Boolean(vc.nestId))
+        );
+      if (hasVectorContent && !state.showVectorTrack) toggleVectorTrack(true);
+      if (sc.cameraKeys.size > 0 && !state.showCamTrack) toggleCamTrack(true);
+    }
+
+    applyEditorTierUI();
     syncLayerTrackContainers();
     syncAudioTrackContainers();
     updateBgUI();
@@ -887,7 +1032,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
     btnCanvasSize.textContent = `📐 ${WORLD_W}×${WORLD_H} ▾`;
     updateStageBadge();
-    if (app.mode === 'editor') renderStage();
+    if (app.mode !== 'scenes') renderStage();
     else renderScenesView();
   }
 
@@ -1026,7 +1171,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         originX = prev.cel.originX;
         originY = prev.cel.originY;
         rotation = prev.cel.rotation;
-        scale = prev.cel.scale;
+        scale = endOff.scale === 1 && prev.cel.scale === undefined ? undefined : endOff.scale;
         hasInk = prev.cel.hasInk;
         nestId = prev.cel.nestId;
         nestOriginFrame = prev.cel.nestOriginFrame;
@@ -1089,34 +1234,41 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     return cel.posKeys.filter((k) => k.relFrame >= 0 && k.relFrame <= maxRel);
   }
 
-  function getCelOffsetAtFrame(cel: Cel | VectorCel, celStart: number, frame: number): { offsetX: number; offsetY: number } {
+  function getCelOffsetAtFrame(
+    cel: Cel | VectorCel,
+    celStart: number,
+    frame: number
+  ): { offsetX: number; offsetY: number; scale: number } {
+    const baseScale = cel.scale ?? 1;
     const keys = getActivePosKeys(cel);
-    if (keys.length === 0) return { offsetX: cel.offsetX, offsetY: cel.offsetY };
+    if (keys.length === 0) return { offsetX: cel.offsetX, offsetY: cel.offsetY, scale: baseScale };
     const maxRel = Math.max(0, cel.duration - 1);
     const relFrame = Math.max(0, Math.min(maxRel, frame - celStart));
     if (keys.length === 1 || relFrame <= keys[0].relFrame) {
-      return { offsetX: keys[0].offsetX, offsetY: keys[0].offsetY };
+      return { offsetX: keys[0].offsetX, offsetY: keys[0].offsetY, scale: keys[0].scale ?? baseScale };
     }
     const last = keys[keys.length - 1];
     if (relFrame >= last.relFrame) {
-      return { offsetX: last.offsetX, offsetY: last.offsetY };
+      return { offsetX: last.offsetX, offsetY: last.offsetY, scale: last.scale ?? baseScale };
     }
     for (let i = 0; i < keys.length - 1; i++) {
       const a = keys[i];
       const b = keys[i + 1];
       if (relFrame >= a.relFrame && relFrame <= b.relFrame) {
+        const sa = a.scale ?? baseScale;
+        const sb = b.scale ?? baseScale;
         if (relFrame === a.relFrame || b.relFrame === a.relFrame) {
-          return { offsetX: a.offsetX, offsetY: a.offsetY };
+          return { offsetX: a.offsetX, offsetY: a.offsetY, scale: sa };
         }
         if (relFrame === b.relFrame) {
-          return { offsetX: b.offsetX, offsetY: b.offsetY };
+          return { offsetX: b.offsetX, offsetY: b.offsetY, scale: sb };
         }
         const t = (relFrame - a.relFrame) / (b.relFrame - a.relFrame);
         const pt = evalSegmentPoint(a, b, t);
-        return { offsetX: pt.x, offsetY: pt.y };
+        return { offsetX: pt.x, offsetY: pt.y, scale: sa + (sb - sa) * t };
       }
     }
-    return { offsetX: cel.offsetX, offsetY: cel.offsetY };
+    return { offsetX: cel.offsetX, offsetY: cel.offsetY, scale: baseScale };
   }
 
   function pushTweenUndo(cel: Cel | VectorCel): void {
@@ -1409,7 +1561,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         originX = prev.cel.originX;
         originY = prev.cel.originY;
         rotation = prev.cel.rotation;
-        scale = prev.cel.scale;
+        scale = endOff.scale === 1 && prev.cel.scale === undefined ? undefined : endOff.scale;
         hasInk = prev.cel.hasInk;
         nestId = prev.cel.nestId;
         nestOriginFrame = prev.cel.nestOriginFrame;
@@ -1924,7 +2076,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if (!entry) return MAT_ID;
       const off = getCelOffsetAtFrame(entry.cel, entry.start, frame);
       const rot = entry.cel.rotation || 0;
-      const sc = entry.cel.scale ?? 1;
+      const sc = off.scale;
       const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', entry.cel) : { ox: 0, oy: 0 };
       return makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, rot, sc);
     }
@@ -1935,7 +2087,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if (!vEntry) return MAT_ID;
       const off = getCelOffsetAtFrame(vEntry.cel, vEntry.start, frame);
       const rot = vEntry.cel.rotation || 0;
-      const sc = vEntry.cel.scale ?? 1;
+      const sc = off.scale;
       const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', vEntry.cel) : { ox: 0, oy: 0 };
       return makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, rot, sc);
     }
@@ -2010,20 +2162,23 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           const cel = entry.cel;
           const piv = getLayerPivotLocal(rootSc, 'cel', cel);
           const off = getCelOffsetAtFrame(cel, entry.start, frame);
-          const mOld = makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, cel.rotation || 0, cel.scale ?? 1);
+          const mOld = makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, cel.rotation || 0, off.scale);
           const mNew = mulMat(deltaMat, mOld);
           const pPiv = applyMatPt(mNew, { x: piv.ox, y: piv.oy });
           const nextOffX = Math.round((pPiv.x - piv.ox) * 10) / 10;
           const nextOffY = Math.round((pPiv.y - piv.oy) * 10) / 10;
           cel.rotation = Math.atan2(mNew[1], mNew[0]);
           const nextSc = Math.round(Math.hypot(mNew[0], mNew[1]) * 1000) / 1000;
-          cel.scale = Math.abs(nextSc - 1) < 0.002 ? 1 : nextSc;
+          const finalSc = Math.abs(nextSc - 1) < 0.002 ? 1 : nextSc;
+          cel.scale = finalSc;
           if (cel.posKeys && cel.posKeys.length > 0) {
             const dx = nextOffX - off.offsetX;
             const dy = nextOffY - off.offsetY;
+            const scaleRatio = off.scale !== 0 ? finalSc / off.scale : 1;
             for (const k of cel.posKeys) {
               k.offsetX += dx;
               k.offsetY += dy;
+              if (scaleRatio !== 1) k.scale = Math.round(((k.scale ?? off.scale) * scaleRatio) * 1000) / 1000;
             }
             cel.offsetX += dx;
             cel.offsetY += dy;
@@ -2039,20 +2194,23 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           const vCel = vEntry.cel;
           const piv = getLayerPivotLocal(rootSc, 'vector', vCel);
           const off = getCelOffsetAtFrame(vCel, vEntry.start, frame);
-          const mOld = makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, vCel.rotation || 0, vCel.scale ?? 1);
+          const mOld = makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, vCel.rotation || 0, off.scale);
           const mNew = mulMat(deltaMat, mOld);
           const pPiv = applyMatPt(mNew, { x: piv.ox, y: piv.oy });
           const nextOffX = Math.round((pPiv.x - piv.ox) * 10) / 10;
           const nextOffY = Math.round((pPiv.y - piv.oy) * 10) / 10;
           vCel.rotation = Math.atan2(mNew[1], mNew[0]);
           const nextSc = Math.round(Math.hypot(mNew[0], mNew[1]) * 1000) / 1000;
-          vCel.scale = Math.abs(nextSc - 1) < 0.002 ? 1 : nextSc;
+          const finalSc = Math.abs(nextSc - 1) < 0.002 ? 1 : nextSc;
+          vCel.scale = finalSc;
           if (vCel.posKeys && vCel.posKeys.length > 0) {
             const dx = nextOffX - off.offsetX;
             const dy = nextOffY - off.offsetY;
+            const scaleRatio = off.scale !== 0 ? finalSc / off.scale : 1;
             for (const k of vCel.posKeys) {
               k.offsetX += dx;
               k.offsetY += dy;
+              if (scaleRatio !== 1) k.scale = Math.round(((k.scale ?? off.scale) * scaleRatio) * 1000) / 1000;
             }
             vCel.offsetX += dx;
             vCel.offsetY += dy;
@@ -2767,11 +2925,12 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     hexColor: string,
     isErase = false,
     overrideOffsetX?: number,
-    overrideOffsetY?: number
+    overrideOffsetY?: number,
+    overrideScale?: number
   ): boolean {
     const ox = typeof overrideOffsetX === 'number' ? overrideOffsetX : vCel.offsetX;
     const oy = typeof overrideOffsetY === 'number' ? overrideOffsetY : vCel.offsetY;
-    const sc = vCel.scale ?? 1;
+    const sc = typeof overrideScale === 'number' ? overrideScale : vCel.scale ?? 1;
     const piv = vCel.rotation || sc !== 1 ? getLayerPivotLocal(activeScene(), 'vector', vCel) : { ox: 0, oy: 0 };
     const localPt = worldToLayerLocal({ x: worldX, y: worldY }, ox, oy, piv.ox, piv.oy, vCel.rotation || 0, sc);
 
@@ -2914,13 +3073,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     hexColor: string,
     isErase = false,
     overrideOffsetX?: number,
-    overrideOffsetY?: number
+    overrideOffsetY?: number,
+    overrideScale?: number
   ): boolean {
     const w = WORLD_W;
     const h = WORLD_H;
     const ox = typeof overrideOffsetX === 'number' ? overrideOffsetX : vCel.offsetX;
     const oy = typeof overrideOffsetY === 'number' ? overrideOffsetY : vCel.offsetY;
-    const sc = vCel.scale ?? 1;
+    const sc = typeof overrideScale === 'number' ? overrideScale : vCel.scale ?? 1;
     const piv = vCel.rotation || sc !== 1 ? getLayerPivotLocal(activeScene(), 'vector', vCel) : { ox: 0, oy: 0 };
     const localSeed = worldToLayerLocal({ x: worldX, y: worldY }, ox, oy, piv.ox, piv.oy, vCel.rotation || 0, sc);
     const sx = Math.round(localSeed.x + ox);
@@ -3208,7 +3368,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   function updateMouthWidget(): void {
     const ml = state.mouthLayer;
-    const showWidget = state.showMouthTrack && ml.visible;
+    const showWidget = !isBasicMode() && state.showMouthTrack && ml.visible;
     mouthWidget.classList.toggle('open', showWidget);
     mouthLayerNameBadge.textContent = ml.name;
     btnMouthDraw.classList.toggle('active', state.activeLayer === 'mouth' && state.tool !== 'moveCam');
@@ -3619,12 +3779,13 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     tintColor?: string,
     parentMat: Mat2D = MAT_ID,
     overrideOffsetX?: number,
-    overrideOffsetY?: number
+    overrideOffsetY?: number,
+    overrideScale?: number
   ): void {
     const ox = typeof overrideOffsetX === 'number' ? overrideOffsetX : vCel.offsetX;
     const oy = typeof overrideOffsetY === 'number' ? overrideOffsetY : vCel.offsetY;
     const rot = vCel.rotation || 0;
-    const sc = vCel.scale ?? 1;
+    const sc = typeof overrideScale === 'number' ? overrideScale : vCel.scale ?? 1;
     const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', vCel) : { ox: 0, oy: 0 };
     renderVectorItemsWithOffset(
       targetCtx,
@@ -3680,7 +3841,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         if (!subCel) continue;
         const subOff = getCelOffsetAtFrame(subCel.cel, subCel.start, clipFrame);
         const subRot = subCel.cel.rotation || 0;
-        const subSc = subCel.cel.scale ?? 1;
+        const subSc = subOff.scale;
         const subPiv = subRot || subSc !== 1 ? getLayerPivotLocal(sc, 'cel', subCel.cel) : { ox: 0, oy: 0 };
         if (subCel.cel.nestId) {
           const selfMat = makeLayerLocalTransform(subOff.offsetX, subOff.offsetY, subPiv.ox, subPiv.oy, subRot, subSc);
@@ -3713,7 +3874,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         if (!subVCel) continue;
         const vOff = getCelOffsetAtFrame(subVCel.cel, subVCel.start, clipFrame);
         const vRot = subVCel.cel.rotation || 0;
-        const vSc = subVCel.cel.scale ?? 1;
+        const vSc = vOff.scale;
         const vPiv = vRot || vSc !== 1 ? getLayerPivotLocal(sc, 'vector', subVCel.cel) : { ox: 0, oy: 0 };
         if (subVCel.cel.nestId) {
           const selfMat = makeLayerLocalTransform(vOff.offsetX, vOff.offsetY, vPiv.ox, vPiv.oy, vRot, vSc);
@@ -3833,10 +3994,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     tintColor: string,
     alpha: number,
     overrideOffsetX?: number,
-    overrideOffsetY?: number
+    overrideOffsetY?: number,
+    overrideScale?: number
   ): void {
     const rot = cel.rotation || 0;
-    const sc = cel.scale ?? 1;
+    const sc = typeof overrideScale === 'number' ? overrideScale : cel.scale ?? 1;
     const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
     drawTintedCanvas(
       targetCtx,
@@ -3875,6 +4037,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   };
 
   function getActiveLayerGizmoInfo(rootSc: Scene, frame: number, invScale = 1): ActiveLayerGizmoInfo | null {
+    if (isBasicMode()) return null;
     const target = activeTimelineTarget();
     const orbitRadius = 52 * invScale;
     const makeResult = (
@@ -3933,7 +4096,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           piv.ox,
           piv.oy,
           entry.cel.rotation || 0,
-          entry.cel.scale ?? 1,
+          off.scale,
           def.ax,
           def.ay,
           { celEntry: entry }
@@ -3961,7 +4124,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           piv.ox,
           piv.oy,
           entry.cel.rotation || 0,
-          entry.cel.scale ?? 1,
+          off.scale,
           def.ax,
           def.ay,
           { vecEntry: entry }
@@ -4014,7 +4177,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     targetCtx.strokeRect(0, 0, WORLD_W, WORLD_H);
     targetCtx.setLineDash([]);
 
-    if (!state.isPlaying && (state.activeLayer === 'cel' || state.activeLayer === 'vector')) {
+    if (!state.isPlaying && !isBasicMode() && (state.activeLayer === 'cel' || state.activeLayer === 'vector')) {
       const target = activeTimelineTarget();
       const isVec = state.activeLayer === 'vector';
       const activeKey = getLayerKeyForActive(target);
@@ -4276,7 +4439,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       targetCtx.restore();
     }
 
-    if (!state.isPlaying && state.showOriginPoint) {
+    if (!state.isPlaying && !isBasicMode() && state.showOriginPoint) {
       const gizmo = getActiveLayerGizmoInfo(rootSc, frame, inv);
       if (gizmo) {
         const showRotateControls =
@@ -4405,13 +4568,13 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             const prevFrame = prevEntry.start + Math.max(0, prevEntry.cel.duration - 1);
             const prevOff = getCelOffsetAtFrame(prevEntry.cel, prevEntry.start, prevFrame);
             const rot = prevEntry.cel.rotation || 0;
-            const sc = prevEntry.cel.scale ?? 1;
+            const sc = prevOff.scale;
             const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', prevEntry.cel) : { ox: 0, oy: 0 };
             if (prevEntry.cel.nestId) {
               const c = rasterizeNestedClipToWorldCanvas(rootSc, prevEntry.cel.nestId, prevFrame, prevEntry.cel.nestOriginFrame ?? 0);
               drawTintedCanvas(targetCtx, c, prevOff.offsetX, prevOff.offsetY, '#ef4444', 0.25, piv.ox, piv.oy, rot, sc);
             } else {
-              drawTintedCel(rootSc, targetCtx, prevEntry.cel, '#ef4444', 0.25, prevOff.offsetX, prevOff.offsetY);
+              drawTintedCel(rootSc, targetCtx, prevEntry.cel, '#ef4444', 0.25, prevOff.offsetX, prevOff.offsetY, prevOff.scale);
             }
           }
         }
@@ -4420,13 +4583,13 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           if (nextEntry && isCelInkFilled(rootSc, nextEntry.cel)) {
             const nextOff = getCelOffsetAtFrame(nextEntry.cel, nextEntry.start, nextEntry.start);
             const rot = nextEntry.cel.rotation || 0;
-            const sc = nextEntry.cel.scale ?? 1;
+            const sc = nextOff.scale;
             const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', nextEntry.cel) : { ox: 0, oy: 0 };
             if (nextEntry.cel.nestId) {
               const c = rasterizeNestedClipToWorldCanvas(rootSc, nextEntry.cel.nestId, nextEntry.start, nextEntry.cel.nestOriginFrame ?? 0);
               drawTintedCanvas(targetCtx, c, nextOff.offsetX, nextOff.offsetY, '#3b82f6', 0.22, piv.ox, piv.oy, rot, sc);
             } else {
-              drawTintedCel(rootSc, targetCtx, nextEntry.cel, '#3b82f6', 0.22, nextOff.offsetX, nextOff.offsetY);
+              drawTintedCel(rootSc, targetCtx, nextEntry.cel, '#3b82f6', 0.22, nextOff.offsetX, nextOff.offsetY, nextOff.scale);
             }
           }
         }
@@ -4436,7 +4599,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if ((forExport || !useViewport || state.showCelLayer) && activeEntry) {
         const activeOff = getCelOffsetAtFrame(activeEntry.cel, activeEntry.start, frame);
         const rot = activeEntry.cel.rotation || 0;
-        const sc = activeEntry.cel.scale ?? 1;
+        const sc = activeOff.scale;
         const piv = rot || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', activeEntry.cel) : { ox: 0, oy: 0 };
         if (activeEntry.cel.nestId) {
           const selfMat = makeLayerLocalTransform(activeOff.offsetX, activeOff.offsetY, piv.ox, piv.oy, rot, sc);
@@ -4485,7 +4648,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             const prevFrame = prevV.start + Math.max(0, prevV.cel.duration - 1);
             const vOff = getCelOffsetAtFrame(prevV.cel, prevV.start, prevFrame);
             const vRot = prevV.cel.rotation || 0;
-            const vSc = prevV.cel.scale ?? 1;
+            const vSc = vOff.scale;
             const vPiv = vRot || vSc !== 1 ? getLayerPivotLocal(rootSc, 'vector', prevV.cel) : { ox: 0, oy: 0 };
             if (prevV.cel.nestId) {
               targetCtx.save();
@@ -4508,7 +4671,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
                 '#ef4444',
                 parentMat,
                 vOff.offsetX,
-                vOff.offsetY
+                vOff.offsetY,
+                vSc
               );
             }
           }
@@ -4520,7 +4684,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           if (nextV && isVectorCelInkFilled(rootSc, nextV.cel)) {
             const vOff = getCelOffsetAtFrame(nextV.cel, nextV.start, nextV.start);
             const vRot = nextV.cel.rotation || 0;
-            const vSc = nextV.cel.scale ?? 1;
+            const vSc = vOff.scale;
             const vPiv = vRot || vSc !== 1 ? getLayerPivotLocal(rootSc, 'vector', nextV.cel) : { ox: 0, oy: 0 };
             if (nextV.cel.nestId) {
               targetCtx.save();
@@ -4543,7 +4707,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
                 '#3b82f6',
                 parentMat,
                 vOff.offsetX,
-                vOff.offsetY
+                vOff.offsetY,
+                vSc
               );
             }
           }
@@ -4555,7 +4720,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         if (!vEntry) return;
         const vOff = getCelOffsetAtFrame(vEntry.cel, vEntry.start, frame);
         const vRot = vEntry.cel.rotation || 0;
-        const vSc = vEntry.cel.scale ?? 1;
+        const vSc = vOff.scale;
         const vPiv = vRot || vSc !== 1 ? getLayerPivotLocal(rootSc, 'vector', vEntry.cel) : { ox: 0, oy: 0 };
         if (vEntry.cel.nestId) {
           const selfMat = makeLayerLocalTransform(vOff.offsetX, vOff.offsetY, vPiv.ox, vPiv.oy, vRot, vSc);
@@ -4590,7 +4755,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             undefined,
             parentMat,
             vOff.offsetX,
-            vOff.offsetY
+            vOff.offsetY,
+            vSc
           );
         }
       }
@@ -4652,8 +4818,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const half = Math.floor(HIT_S / 2);
     let outerFallback: string | null = null;
 
+    const basicVecKey = isBasicMode() && target.vectorTracks[0] ? `vector:${target.vectorTracks[0].id}` : null;
     for (let li = 0; li < target.layerOrder.length; li++) {
       const layerKey = target.layerOrder[li];
+      if (basicVecKey && layerKey !== basicVecKey) continue;
       if (!state.showVectorLayer && layerKey.startsWith('vector:')) continue;
       if (!state.showCelLayer && layerKey.startsWith('cel:')) continue;
 
@@ -4815,11 +4983,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     targetCtx.fillRect(0, 0, WORLD_W, WORLD_H);
 
     // Composite layers from bottom to top of timeline (higher in timeline renders on top)
+    const basicVecKey = app.mode === 'basic' && sc.vectorTracks[0] ? `vector:${sc.vectorTracks[0].id}` : null;
     for (let li = sc.layerOrder.length - 1; li >= 0; li--) {
+      const lk = sc.layerOrder[li];
+      if (basicVecKey && lk !== basicVecKey) continue;
       renderSingleLayerToCtx(
         sc,
         sc,
-        sc.layerOrder[li],
+        lk,
         targetCtx,
         targetW,
         targetH,
@@ -4973,6 +5144,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         mode: 'scaleLayer';
         layer: 'cel' | 'vector' | 'bg';
         targetObj: Cel | VectorCel | BgLayer;
+        tweenKeyIndex?: number;
         startScale: number;
         startStagePt: Point2D;
         moved: boolean;
@@ -5559,7 +5731,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const totalScale = (cam.scale / 100) * getTotalViewScale();
       const worldPt = stageToWorld(stagePt, cam);
       const inv = 1 / totalScale;
-      if (e.button === 0 && !e.shiftKey && state.showOriginPoint) {
+      if (e.button === 0 && !e.shiftKey && !isBasicMode() && state.showOriginPoint) {
         const gizmo = getActiveLayerGizmoInfo(rootSc, state.currentFrame, inv);
         if (gizmo) {
           if (Math.hypot(worldPt.x - gizmo.worldOx, worldPt.y - gizmo.worldOy) <= 18 * inv) {
@@ -5575,7 +5747,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         }
       }
       if (e.button === 2) {
-        if ((state.activeLayer === 'cel' || state.activeLayer === 'vector') && !e.shiftKey) {
+        if (!isBasicMode() && (state.activeLayer === 'cel' || state.activeLayer === 'vector') && !e.shiftKey) {
           const activeKey = getLayerKeyForActive(target);
           const entry: { start: number; cel: Cel | VectorCel } | null =
             state.activeLayer === 'vector'
@@ -5590,11 +5762,13 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
               if (keep) {
                 entry.cel.offsetX = Math.round(keep.offsetX);
                 entry.cel.offsetY = Math.round(keep.offsetY);
+                if (typeof keep.scale === 'number') entry.cel.scale = keep.scale;
               }
               delete entry.cel.posKeys;
             } else if (removed.relFrame === 0) {
               entry.cel.offsetX = Math.round(entry.cel.posKeys[0].offsetX);
               entry.cel.offsetY = Math.round(entry.cel.posKeys[0].offsetY);
+              if (typeof entry.cel.posKeys[0].scale === 'number') entry.cel.scale = entry.cel.posKeys[0].scale;
             }
             isPointerDown = false;
             hoverMotionHit = null;
@@ -5621,16 +5795,48 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           const existed = Boolean(getVectorCelEntryAt(state.currentFrame));
           const entry = ensureVectorCelAt(state.currentFrame, true);
           const cel = entry.cel;
-          if (cel.posKeys && cel.posKeys.length > 0) pushTweenUndo(cel);
-          else pushVectorMoveUndo(cel, cel.offsetX, cel.offsetY);
-          moveCamState = {
-            mode: 'scaleLayer',
-            layer: 'vector',
-            targetObj: cel,
-            startScale: cel.scale ?? 1,
-            startStagePt: stagePt,
-            moved: false,
-          };
+          const relFrame = state.currentFrame - entry.start;
+          const hasTween = Boolean(cel.posKeys && cel.posKeys.length > 0);
+          if (!isBasicMode() && (hasTween || (cel.duration > 1 && relFrame > 0))) {
+            pushTweenUndo(cel);
+            if (!cel.posKeys || cel.posKeys.length === 0) {
+              cel.posKeys = [{ relFrame: 0, offsetX: cel.offsetX, offsetY: cel.offsetY, scale: cel.scale ?? 1 }];
+            }
+            let key = cel.posKeys.find((k) => k.relFrame === relFrame);
+            if (!key) {
+              const curOff = getCelOffsetAtFrame(cel, entry.start, state.currentFrame);
+              key = {
+                relFrame,
+                offsetX: Math.round(curOff.offsetX),
+                offsetY: Math.round(curOff.offsetY),
+                scale: curOff.scale,
+              };
+              cel.posKeys.push(key);
+              sortPosKeys(cel);
+            } else if (typeof key.scale !== 'number') {
+              key.scale = getCelOffsetAtFrame(cel, entry.start, state.currentFrame).scale;
+            }
+            const tweenKeyIndex = cel.posKeys.indexOf(key);
+            moveCamState = {
+              mode: 'scaleLayer',
+              layer: 'vector',
+              targetObj: cel,
+              tweenKeyIndex,
+              startScale: key.scale ?? cel.scale ?? 1,
+              startStagePt: stagePt,
+              moved: false,
+            };
+          } else {
+            pushVectorMoveUndo(cel, cel.offsetX, cel.offsetY);
+            moveCamState = {
+              mode: 'scaleLayer',
+              layer: 'vector',
+              targetObj: cel,
+              startScale: cel.scale ?? 1,
+              startStagePt: stagePt,
+              moved: false,
+            };
+          }
           if (!existed) renderTimeline();
           stage.style.cursor = 'nwse-resize';
         } else if (state.activeLayer === 'bg' && nestStack.length === 0) {
@@ -5657,16 +5863,48 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           const existed = Boolean(getCelEntryAt(state.currentFrame));
           const entry = ensureCelAt(state.currentFrame, true);
           const cel = entry.cel;
-          if (cel.posKeys && cel.posKeys.length > 0) pushTweenUndo(cel);
-          else pushMoveUndo(cel, cel.offsetX, cel.offsetY);
-          moveCamState = {
-            mode: 'scaleLayer',
-            layer: 'cel',
-            targetObj: cel,
-            startScale: cel.scale ?? 1,
-            startStagePt: stagePt,
-            moved: false,
-          };
+          const relFrame = state.currentFrame - entry.start;
+          const hasTween = Boolean(cel.posKeys && cel.posKeys.length > 0);
+          if (!isBasicMode() && (hasTween || (cel.duration > 1 && relFrame > 0))) {
+            pushTweenUndo(cel);
+            if (!cel.posKeys || cel.posKeys.length === 0) {
+              cel.posKeys = [{ relFrame: 0, offsetX: cel.offsetX, offsetY: cel.offsetY, scale: cel.scale ?? 1 }];
+            }
+            let key = cel.posKeys.find((k) => k.relFrame === relFrame);
+            if (!key) {
+              const curOff = getCelOffsetAtFrame(cel, entry.start, state.currentFrame);
+              key = {
+                relFrame,
+                offsetX: Math.round(curOff.offsetX),
+                offsetY: Math.round(curOff.offsetY),
+                scale: curOff.scale,
+              };
+              cel.posKeys.push(key);
+              sortPosKeys(cel);
+            } else if (typeof key.scale !== 'number') {
+              key.scale = getCelOffsetAtFrame(cel, entry.start, state.currentFrame).scale;
+            }
+            const tweenKeyIndex = cel.posKeys.indexOf(key);
+            moveCamState = {
+              mode: 'scaleLayer',
+              layer: 'cel',
+              targetObj: cel,
+              tweenKeyIndex,
+              startScale: key.scale ?? cel.scale ?? 1,
+              startStagePt: stagePt,
+              moved: false,
+            };
+          } else {
+            pushMoveUndo(cel, cel.offsetX, cel.offsetY);
+            moveCamState = {
+              mode: 'scaleLayer',
+              layer: 'cel',
+              targetObj: cel,
+              startScale: cel.scale ?? 1,
+              startStagePt: stagePt,
+              moved: false,
+            };
+          }
           if (!existed) renderTimeline();
           stage.style.cursor = 'nwse-resize';
         }
@@ -5676,7 +5914,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         // Check active layer's motion path handles before click-to-select layer switching
         let activePathHit: MotionPathHit | null = null;
         const curActiveKey = getLayerKeyForActive(target);
-        if (state.activeLayer === 'cel' || state.activeLayer === 'vector') {
+        if (!isBasicMode() && (state.activeLayer === 'cel' || state.activeLayer === 'vector')) {
           const activeEntry: { start: number; cel: Cel | VectorCel } | null =
             state.activeLayer === 'vector'
               ? getVectorCelEntryAt(state.currentFrame)
@@ -5718,7 +5956,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           };
         } else if (state.activeLayer === 'vector') {
           const curVecEntry = getVectorCelEntryAt(state.currentFrame);
-          const pathHit = hitTestLayerMotionPath(rootSc, activeKey, curVecEntry, worldPt, cam, getTotalViewScale());
+          const pathHit = isBasicMode()
+            ? null
+            : hitTestLayerMotionPath(rootSc, activeKey, curVecEntry, worldPt, cam, getTotalViewScale());
           const vecParentMat = getParentWorldMatrix(rootSc, target, activeKey, state.currentFrame);
 
           if (pathHit?.kind === 'key' && curVecEntry?.cel.posKeys?.[pathHit.keyIndex]) {
@@ -5768,10 +6008,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           const relFrame = state.currentFrame - entry.start;
           const hasTween = Boolean(cel.posKeys && cel.posKeys.length > 0);
 
-          if (hasTween || (cel.duration > 1 && relFrame > 0)) {
+          if (!isBasicMode() && (hasTween || (cel.duration > 1 && relFrame > 0))) {
             pushTweenUndo(cel);
             if (!cel.posKeys || cel.posKeys.length === 0) {
-              cel.posKeys = [{ relFrame: 0, offsetX: cel.offsetX, offsetY: cel.offsetY }];
+              cel.posKeys = [{ relFrame: 0, offsetX: cel.offsetX, offsetY: cel.offsetY, scale: cel.scale ?? 1 }];
             }
             let key = cel.posKeys.find((k) => k.relFrame === relFrame);
             if (!key) {
@@ -5780,6 +6020,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
                 relFrame,
                 offsetX: Math.round(curOff.offsetX),
                 offsetY: Math.round(curOff.offsetY),
+                scale: curOff.scale,
               };
               cel.posKeys.push(key);
               sortPosKeys(cel);
@@ -5829,7 +6070,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           };
         } else {
           const curEntry = getCelEntryAt(state.currentFrame);
-          const pathHit = hitTestLayerMotionPath(rootSc, activeKey, curEntry, worldPt, cam, getTotalViewScale());
+          const pathHit = isBasicMode()
+            ? null
+            : hitTestLayerMotionPath(rootSc, activeKey, curEntry, worldPt, cam, getTotalViewScale());
           const celParentMat = getParentWorldMatrix(rootSc, target, activeKey, state.currentFrame);
 
           if (pathHit?.kind === 'key' && curEntry?.cel.posKeys?.[pathHit.keyIndex]) {
@@ -5879,10 +6122,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           const relFrame = state.currentFrame - entry.start;
           const hasTween = Boolean(cel.posKeys && cel.posKeys.length > 0);
 
-          if (hasTween || (cel.duration > 1 && relFrame > 0)) {
+          if (!isBasicMode() && (hasTween || (cel.duration > 1 && relFrame > 0))) {
             pushTweenUndo(cel);
             if (!cel.posKeys || cel.posKeys.length === 0) {
-              cel.posKeys = [{ relFrame: 0, offsetX: cel.offsetX, offsetY: cel.offsetY }];
+              cel.posKeys = [{ relFrame: 0, offsetX: cel.offsetX, offsetY: cel.offsetY, scale: cel.scale ?? 1 }];
             }
             let key = cel.posKeys.find((k) => k.relFrame === relFrame);
             if (!key) {
@@ -5891,6 +6134,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
                 relFrame,
                 offsetX: Math.round(curOff.offsetX),
                 offsetY: Math.round(curOff.offsetY),
+                scale: curOff.scale,
               };
               cel.posKeys.push(key);
               sortPosKeys(cel);
@@ -5994,7 +6238,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         pushVectorItemsUndo(cel);
 
         const vOff = getCelOffsetAtFrame(cel, start, state.currentFrame);
-        const sc = cel.scale ?? 1;
+        const sc = vOff.scale;
         const piv = cel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
         const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0, sc);
         const r = state.nudgeRadius;
@@ -6040,9 +6284,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         const existed = Boolean(getVectorCelEntryAt(state.currentFrame));
         const { start, cel } = ensureVectorCelAt(state.currentFrame, rightErase);
         const vOff = getCelOffsetAtFrame(cel, start, state.currentFrame);
-        const vecFilled = tryVectorStrokeFill(cel, pLocalPt.x, pLocalPt.y, state.brushColor, rightErase, vOff.offsetX, vOff.offsetY);
+        const vecFilled = tryVectorStrokeFill(cel, pLocalPt.x, pLocalPt.y, state.brushColor, rightErase, vOff.offsetX, vOff.offsetY, vOff.scale);
         if (!vecFilled) {
-          floodFillVectorCel(cel, pLocalPt.x, pLocalPt.y, state.brushColor, rightErase, vOff.offsetX, vOff.offsetY);
+          floodFillVectorCel(cel, pLocalPt.x, pLocalPt.y, state.brushColor, rightErase, vOff.offsetX, vOff.offsetY, vOff.scale);
         }
         if (!existed || vecFilled || cel.items.length > 0) renderTimeline();
         renderStage();
@@ -6054,7 +6298,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const { start, cel } = ensureVectorCelAt(state.currentFrame, eraseMode);
       pushVectorItemsUndo(cel);
       const vOff = getCelOffsetAtFrame(cel, start, state.currentFrame);
-      const sc = cel.scale ?? 1;
+      const sc = vOff.scale;
       const piv = cel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
       const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0, sc);
       const item: VectorStrokeItem | VectorEraseItem = eraseMode
@@ -6101,7 +6345,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const imgData = cctx.getImageData(0, 0, w, h);
       const pixels32 = new Uint32Array(imgData.data.buffer);
       const celOff = getCelOffsetAtFrame(cel, activeEntry.start, state.currentFrame);
-      const sc = cel.scale ?? 1;
+      const sc = celOff.scale;
       const piv = cel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
       activeBitmapNudgeState = {
         cel,
@@ -6121,8 +6365,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const { obj, created } = getTargetLayerForEdit(true, false);
       if (obj) {
         const curCelEntry = layerType === 'cel' ? getCelEntryAt(state.currentFrame) : null;
-        const off = curCelEntry ? getCelOffsetAtFrame(curCelEntry.cel, curCelEntry.start, state.currentFrame) : { offsetX: obj.offsetX, offsetY: obj.offsetY };
-        const sc = obj.scale ?? 1;
+        const off = curCelEntry ? getCelOffsetAtFrame(curCelEntry.cel, curCelEntry.start, state.currentFrame) : { offsetX: obj.offsetX, offsetY: obj.offsetY, scale: obj.scale ?? 1 };
+        const sc = off.scale;
         const piv = obj.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, layerType, obj) : { ox: 0, oy: 0 };
         const lp = worldToLayerLocal(pLocalPt, off.offsetX, off.offsetY, piv.ox, piv.oy, obj.rotation || 0, sc);
         floodFillLayer(obj, lp.x, lp.y, state.brushColor, false, false);
@@ -6144,8 +6388,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (cctx) {
       cctx.imageSmoothingEnabled = false;
       const curCelEntry = layerType === 'cel' ? getCelEntryAt(state.currentFrame) : null;
-      const off = curCelEntry ? getCelOffsetAtFrame(curCelEntry.cel, curCelEntry.start, state.currentFrame) : { offsetX: obj.offsetX, offsetY: obj.offsetY };
-      const sc = obj.scale ?? 1;
+      const off = curCelEntry ? getCelOffsetAtFrame(curCelEntry.cel, curCelEntry.start, state.currentFrame) : { offsetX: obj.offsetX, offsetY: obj.offsetY, scale: obj.scale ?? 1 };
+      const sc = off.scale;
       const piv = obj.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, layerType, obj) : { ox: 0, oy: 0 };
       const lp = worldToLayerLocal(pLocalPt, off.offsetX, off.offsetY, piv.ox, piv.oy, obj.rotation || 0, sc);
       drawPixelDisk(cctx, lp.x, lp.y, state.brushSize, state.brushColor, eraseMode);
@@ -6168,7 +6412,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         const cam = getEvaluatedCamera(state.currentFrame);
         const worldPt = stageToWorld(stagePt, cam);
         const inv = 1 / (getTotalViewScale() * (cam.scale / 100));
-        const gizmo = state.showOriginPoint ? getActiveLayerGizmoInfo(activeScene(), state.currentFrame, inv) : null;
+        const gizmo = !isBasicMode() && state.showOriginPoint ? getActiveLayerGizmoInfo(activeScene(), state.currentFrame, inv) : null;
         let nextGizmoHit: 'origin' | 'rotateHandle' | null = null;
         if (gizmo) {
           if (Math.hypot(worldPt.x - gizmo.worldOx, worldPt.y - gizmo.worldOy) <= 18 * inv) {
@@ -6180,7 +6424,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         const gizmoChanged = nextGizmoHit !== hoverOriginGizmoPart;
         hoverOriginGizmoPart = nextGizmoHit;
 
-        if (state.activeLayer === 'cel' || state.activeLayer === 'vector') {
+        if (!isBasicMode() && (state.activeLayer === 'cel' || state.activeLayer === 'vector')) {
           const entry: { start: number; cel: Cel | VectorCel } | null =
             state.activeLayer === 'vector'
               ? getVectorCelEntryAt(state.currentFrame)
@@ -6221,9 +6465,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const target = activeTimelineTarget();
       const cel = activeNudgeState.cel;
       const curEntry = getVectorCelEntryAt(state.currentFrame);
-      const vOff = curEntry && curEntry.cel === cel ? getCelOffsetAtFrame(cel, curEntry.start, state.currentFrame) : { offsetX: cel.offsetX, offsetY: cel.offsetY };
+      const vOff = curEntry && curEntry.cel === cel ? getCelOffsetAtFrame(cel, curEntry.start, state.currentFrame) : { offsetX: cel.offsetX, offsetY: cel.offsetY, scale: cel.scale ?? 1 };
       const pLocalPt = worldToTargetParentLocal(rootSc, target, `vector:${activeNudgeState.trackId}`, state.currentFrame, worldPt);
-      const sc = cel.scale ?? 1;
+      const sc = vOff.scale;
       const piv = cel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
       const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0, sc);
       const dx = localPt.x - activeNudgeState.startLocalPt.x;
@@ -6244,9 +6488,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const target = activeTimelineTarget();
       const { cel, imgData, pixels32, radius } = activeBitmapNudgeState;
       const curEntry = getCelEntryAt(state.currentFrame);
-      const celOff = curEntry && curEntry.cel === cel ? getCelOffsetAtFrame(cel, curEntry.start, state.currentFrame) : { offsetX: cel.offsetX, offsetY: cel.offsetY };
+      const celOff = curEntry && curEntry.cel === cel ? getCelOffsetAtFrame(cel, curEntry.start, state.currentFrame) : { offsetX: cel.offsetX, offsetY: cel.offsetY, scale: cel.scale ?? 1 };
       const pLocalPt = worldToTargetParentLocal(rootSc, target, getLayerKeyForActive(target), state.currentFrame, worldPt);
-      const sc = cel.scale ?? 1;
+      const sc = celOff.scale;
       const piv = cel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
       const curLocalPt = worldToLayerLocal(pLocalPt, celOff.offsetX, celOff.offsetY, piv.ox, piv.oy, cel.rotation || 0, sc);
       const dx = curLocalPt.x - activeBitmapNudgeState.lastLocalPt.x;
@@ -6431,7 +6675,20 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         const rawNext = Math.max(0.05, Math.min(10, moveCamState.startScale * factor));
         const snappedNext = Math.abs(rawNext - 1) < 0.004 ? 1 : Math.round(rawNext * 1000) / 1000;
         if (Math.abs(snappedNext - moveCamState.startScale) > 0.002) moveCamState.moved = true;
-        moveCamState.targetObj.scale = snappedNext;
+        if (
+          typeof moveCamState.tweenKeyIndex === 'number' &&
+          'posKeys' in moveCamState.targetObj &&
+          moveCamState.targetObj.posKeys &&
+          moveCamState.targetObj.posKeys[moveCamState.tweenKeyIndex]
+        ) {
+          const k = moveCamState.targetObj.posKeys[moveCamState.tweenKeyIndex];
+          k.scale = snappedNext;
+          if (k.relFrame === 0) {
+            moveCamState.targetObj.scale = snappedNext;
+          }
+        } else {
+          moveCamState.targetObj.scale = snappedNext;
+        }
         updateStageBadge();
         renderStage();
       } else if (moveCamState.mode === 'moveMouth') {
@@ -6537,9 +6794,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const target = activeTimelineTarget();
       const vCel = activeDrawVector.cel;
       const curVec = getVectorCelEntryAt(state.currentFrame);
-      const vOff = curVec && curVec.cel === vCel ? getCelOffsetAtFrame(vCel, curVec.start, state.currentFrame) : { offsetX: vCel.offsetX, offsetY: vCel.offsetY };
+      const vOff = curVec && curVec.cel === vCel ? getCelOffsetAtFrame(vCel, curVec.start, state.currentFrame) : { offsetX: vCel.offsetX, offsetY: vCel.offsetY, scale: vCel.scale ?? 1 };
       const pLocalPt = worldToTargetParentLocal(rootSc, target, `vector:${state.activeVectorTrack.id}`, state.currentFrame, worldPt);
-      const sc = vCel.scale ?? 1;
+      const sc = vOff.scale;
       const piv = vCel.rotation || sc !== 1 ? getLayerPivotLocal(rootSc, 'vector', vCel) : { ox: 0, oy: 0 };
       const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, vCel.rotation || 0, sc);
       const pts = activeDrawVector.item.points;
@@ -6577,10 +6834,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           const curCel = layerType === 'cel' ? getCelEntryAt(state.currentFrame) : null;
           const off = curCel && curCel.cel === activeDrawTarget
             ? getCelOffsetAtFrame(curCel.cel, curCel.start, state.currentFrame)
-            : { offsetX: activeDrawTarget.offsetX, offsetY: activeDrawTarget.offsetY };
+            : { offsetX: activeDrawTarget.offsetX, offsetY: activeDrawTarget.offsetY, scale: activeDrawTarget.scale ?? 1 };
           const pLast = worldToTargetParentLocal(rootSc, target, drawKey, state.currentFrame, lastWorldPt);
           const pCur = worldToTargetParentLocal(rootSc, target, drawKey, state.currentFrame, worldPt);
-          const sc = activeDrawTarget.scale ?? 1;
+          const sc = off.scale;
           const piv = activeDrawTarget.rotation || sc !== 1
             ? getLayerPivotLocal(rootSc, layerType, activeDrawTarget)
             : { ox: 0, oy: 0 };
@@ -6619,14 +6876,30 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (moveCamState && (moveCamState.mode === 'moveFrame' || moveCamState.mode === 'moveVector') && !moveCamState.moved) {
       moveCamState.cel.undoStack.pop();
     }
-    if (moveCamState && (moveCamState.mode === 'moveOrigin' || moveCamState.mode === 'rotateLayer' || moveCamState.mode === 'scaleLayer') && !moveCamState.moved) {
-      if (moveCamState.layer === 'mouth') {
-        mouthUndoStacks.get(moveCamState.mouthLayer || state.mouthLayer)?.pop();
-      } else if (moveCamState.targetObj) {
-        moveCamState.targetObj.undoStack.pop();
+    let updatedTween = false;
+    if (moveCamState && (moveCamState.mode === 'moveOrigin' || moveCamState.mode === 'rotateLayer' || moveCamState.mode === 'scaleLayer')) {
+      if (!moveCamState.moved) {
+        if (moveCamState.layer === 'mouth') {
+          mouthUndoStacks.get(moveCamState.mouthLayer || state.mouthLayer)?.pop();
+        } else if (moveCamState.targetObj) {
+          const undone = moveCamState.targetObj.undoStack.pop();
+          if (
+            undone &&
+            undone.type === 'tween' &&
+            moveCamState.mode === 'scaleLayer' &&
+            typeof moveCamState.tweenKeyIndex === 'number' &&
+            'posKeys' in moveCamState.targetObj
+          ) {
+            moveCamState.targetObj.offsetX = undone.offsetX;
+            moveCamState.targetObj.offsetY = undone.offsetY;
+            moveCamState.targetObj.scale = undone.scale;
+            moveCamState.targetObj.posKeys = clonePosKeys(undone.posKeys);
+          }
+        }
+      } else if (moveCamState.mode === 'scaleLayer' && typeof moveCamState.tweenKeyIndex === 'number') {
+        updatedTween = true;
       }
     }
-    let updatedTween = false;
     if (moveCamState && (moveCamState.mode === 'moveTweenKey' || moveCamState.mode === 'moveTweenCurve')) {
       if (!moveCamState.moved) {
         const undone = moveCamState.cel.undoStack.pop();
@@ -6660,7 +6933,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   });
 
   stage.addEventListener('dblclick', (e) => {
-    if (state.isPlaying) return;
+    if (state.isPlaying || isBasicMode()) return;
     const stagePt = getStageCoords(e);
     const cam = getEvaluatedCamera(state.currentFrame);
     const worldPt = stageToWorld(stagePt, cam);
@@ -6821,6 +7094,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   let timelineCustomExtraHeight = 0;
 
   function getTimelineBaseExtra(): number {
+    if (isBasicMode()) {
+      return (state.showVectorTrack ? 36 : 0) + (state.showAudioTrack ? 42 : 0);
+    }
     const target = activeTimelineTarget();
     const isScene = 'mouthLayers' in target;
     let extra = Math.max(0, target.celTracks.length - 1) * 36;
@@ -6893,6 +7169,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     rightEl: HTMLDivElement;
     tagSpan: HTMLSpanElement;
     tagTextSpan: HTMLSpanElement;
+    btnAddChild: HTMLButtonElement;
+    btnAdd: HTMLButtonElement;
     btnVis: HTMLButtonElement;
     btnRemove: HTMLButtonElement;
   }
@@ -7119,7 +7397,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     boundLayerLabelEls.add(labelEl);
 
     labelEl.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || isBasicMode()) return;
       if ((e.target as HTMLElement)?.closest('button, input, select')) return;
       if (renamingLayerKey !== null) return;
       layerDragState = {
@@ -7140,12 +7418,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     });
 
     labelEl.addEventListener('dblclick', (e) => {
+      if (isBasicMode()) return;
       if ((e.target as HTMLElement)?.closest('button, input, select')) return;
       e.stopPropagation();
       startLayerRename(getKey());
     });
 
     labelEl.addEventListener('contextmenu', (e) => {
+      if (isBasicMode()) return;
       if ((e.target as HTMLElement)?.closest('input, select')) return;
       e.preventDefault();
       e.stopPropagation();
@@ -7449,7 +7729,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           });
 
           rowEl.addEventListener('dblclick', (e) => {
-            if (e.button !== 0) return;
+            if (e.button !== 0 || isBasicMode()) return;
             selectCelTrack(trackId);
             const f = frameFromClientX(e.clientX);
             const curTrk = activeTimelineTarget().celTracks.find((t) => t.id === trackId);
@@ -7471,6 +7751,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             contextTargetFrame = frameFromClientX(e.clientX);
             goToFrame(contextTargetFrame);
 
+            const basic = isBasicMode();
             const curTrk = activeTimelineTarget().celTracks.find((t) => t.id === trackId);
             const entry = curTrk ? getCelEntryAt(contextTargetFrame, curTrk.cels) : null;
             const hasEntry = Boolean(entry);
@@ -7478,14 +7759,16 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             const hasTween = Boolean(entry && getActivePosKeys(entry.cel).length >= 2);
             mustEl<HTMLButtonElement>('ctxDelete').disabled = !hasEntry;
             mustEl<HTMLButtonElement>('ctxClear').disabled = !hasEntry;
-            ctxExitNest.classList.toggle('hidden-nest-ui', nestStack.length === 0);
+            ctxExitNest.classList.toggle('hidden-nest-ui', basic || nestStack.length === 0);
+            ctxNest.classList.toggle('hidden-nest-ui', basic);
             ctxNest.textContent = hasNest
               ? 'Open Nested Animation'
               : hasEntry
                 ? 'Open Nested Animation'
                 : 'New Nested Animation';
-            ctxUnnest.classList.toggle('hidden-nest-ui', !hasNest);
-            ctxClearTween.classList.toggle('hidden-nest-ui', !hasTween);
+            ctxUnnest.classList.toggle('hidden-nest-ui', basic || !hasNest);
+            ctxClearTween.classList.toggle('hidden-nest-ui', basic || !hasTween);
+            ctxNestTweenDivider.classList.toggle('hidden-nest-ui', basic);
 
             celContextMenu.style.display = 'flex';
             const menuW = 190;
@@ -7673,7 +7956,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           });
 
           rowEl.addEventListener('dblclick', (e) => {
-            if (e.button !== 0) return;
+            if (e.button !== 0 || isBasicMode()) return;
             selectVectorTrack(trackId);
             const f = frameFromClientX(e.clientX);
             const curTrk = activeTimelineTarget().vectorTracks.find((t) => t.id === trackId);
@@ -7695,6 +7978,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             contextTargetFrame = frameFromClientX(e.clientX);
             goToFrame(contextTargetFrame);
 
+            const basic = isBasicMode();
             const curTrk = activeTimelineTarget().vectorTracks.find((t) => t.id === trackId);
             const entry = curTrk ? getVectorCelEntryAt(contextTargetFrame, curTrk.cels) : null;
             const hasEntry = Boolean(entry);
@@ -7702,14 +7986,16 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             const hasTween = Boolean(entry && getActivePosKeys(entry.cel).length >= 2);
             mustEl<HTMLButtonElement>('ctxDelete').disabled = !hasEntry;
             mustEl<HTMLButtonElement>('ctxClear').disabled = !hasEntry;
-            ctxExitNest.classList.toggle('hidden-nest-ui', nestStack.length === 0);
+            ctxExitNest.classList.toggle('hidden-nest-ui', basic || nestStack.length === 0);
+            ctxNest.classList.toggle('hidden-nest-ui', basic);
             ctxNest.textContent = hasNest
               ? 'Open Nested Animation'
               : hasEntry
                 ? 'Open Nested Animation'
                 : 'New Nested Animation';
-            ctxUnnest.classList.toggle('hidden-nest-ui', !hasNest);
-            ctxClearTween.classList.toggle('hidden-nest-ui', !hasTween);
+            ctxUnnest.classList.toggle('hidden-nest-ui', basic || !hasNest);
+            ctxClearTween.classList.toggle('hidden-nest-ui', basic || !hasTween);
+            ctxNestTweenDivider.classList.toggle('hidden-nest-ui', basic);
 
             celContextMenu.style.display = 'flex';
             const menuW = 190;
@@ -7734,6 +8020,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             rightEl,
             tagSpan,
             tagTextSpan,
+            btnAddChild,
+            btnAdd,
             btnVis,
             btnRemove,
           });
@@ -8022,10 +8310,15 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       applyOrderIfNeeded(layerRightsContainer, desiredRights);
     }
 
+    const basic = isBasicMode();
+
     // Sync cel tracks
     for (const trk of celTracks) {
       const dom = celTrackDomMap.get(trk.id);
       if (!dom) continue;
+      dom.labelEl.classList.toggle('hidden-track', basic);
+      dom.rowEl.classList.toggle('hidden-track', basic);
+      dom.rightEl.classList.toggle('hidden-track', basic);
       dom.btnVis.style.opacity = trk.visible ? '1' : '0.35';
       dom.btnRemove.style.display = celTracks.length > 1 ? '' : 'none';
       if (renamingLayerKey !== `cel:${trk.id}` && dom.tagTextSpan.textContent !== trk.name) {
@@ -8034,26 +8327,30 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     }
 
     // Sync vector tracks
-    for (const trk of vecTracks) {
+    vecTracks.forEach((trk, idx) => {
       const dom = vectorTrackDomMap.get(trk.id);
-      if (!dom) continue;
-      dom.labelEl.classList.toggle('hidden-track', !state.showVectorTrack);
-      dom.rowEl.classList.toggle('hidden-track', !state.showVectorTrack);
-      dom.rightEl.classList.toggle('hidden-track', !state.showVectorTrack);
+      if (!dom) return;
+      const showVec = basic ? idx === 0 : state.showVectorTrack;
+      dom.labelEl.classList.toggle('hidden-track', !showVec);
+      dom.rowEl.classList.toggle('hidden-track', !showVec);
+      dom.rightEl.classList.toggle('hidden-track', !showVec);
+      dom.btnAddChild.style.display = basic ? 'none' : '';
+      dom.btnAdd.style.display = basic ? 'none' : '';
       dom.btnVis.style.opacity = trk.visible ? '1' : '0.35';
-      dom.btnRemove.style.display = vecTracks.length > 1 ? '' : 'none';
+      dom.btnRemove.style.display = !basic && vecTracks.length > 1 ? '' : 'none';
       if (renamingLayerKey !== `vector:${trk.id}` && dom.tagTextSpan.textContent !== trk.name) {
         dom.tagTextSpan.textContent = trk.name;
       }
-    }
+    });
 
     // Sync background layers
     for (const bg of bgLayers) {
       const dom = bgTrackDomMap.get(bg.id);
       if (!dom) continue;
-      dom.labelEl.classList.toggle('hidden-track', !state.showBgTrack);
-      dom.rowEl.classList.toggle('hidden-track', !state.showBgTrack);
-      dom.rightEl.classList.toggle('hidden-track', !state.showBgTrack);
+      const showBg = !basic && state.showBgTrack;
+      dom.labelEl.classList.toggle('hidden-track', !showBg);
+      dom.rowEl.classList.toggle('hidden-track', !showBg);
+      dom.rightEl.classList.toggle('hidden-track', !showBg);
       dom.btnVis.style.opacity = bg.visible ? '1' : '0.35';
       dom.btnRemove.style.display = bgLayers.length > 1 ? '' : 'none';
       if (renamingLayerKey !== `bg:${bg.id}` && dom.tagTextSpan.textContent !== bg.trackName) {
@@ -8070,9 +8367,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     for (const ml of mouthLayers) {
       const dom = mouthTrackDomMap.get(ml.id);
       if (!dom) continue;
-      dom.labelEl.classList.toggle('hidden-track', !state.showMouthTrack);
-      dom.rowEl.classList.toggle('hidden-track', !state.showMouthTrack);
-      dom.rightEl.classList.toggle('hidden-track', !state.showMouthTrack);
+      const showMouth = !basic && state.showMouthTrack;
+      dom.labelEl.classList.toggle('hidden-track', !showMouth);
+      dom.rowEl.classList.toggle('hidden-track', !showMouth);
+      dom.rightEl.classList.toggle('hidden-track', !showMouth);
       dom.btnVis.style.opacity = ml.visible ? '1' : '0.35';
       dom.btnRemove.style.display = mouthLayers.length > 1 ? '' : 'none';
       if (renamingLayerKey !== `mouth:${ml.id}` && dom.tagTextSpan.textContent !== ml.name) {
@@ -8084,7 +8382,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     for (const k of target.layerOrder) {
       const lbl = getLayerLabelElement(k);
       const rightEl = getLayerRightElement(k);
-      const depth = getLayerDepth(target, k);
+      const depth = basic ? 0 : getLayerDepth(target, k);
       if (lbl) {
         lbl.style.paddingLeft = `${8 + depth * 14}px`;
         lbl.classList.toggle('is-child-layer', depth > 0);
@@ -9183,7 +9481,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           labelEl.append(volFillEl, tagSpan, btnGroup);
 
           labelEl.addEventListener('pointerdown', (e) => {
-            if (e.button !== 0) return;
+            if (e.button !== 0 || isBasicMode()) return;
             if ((e.target as HTMLElement)?.closest('button, input, select')) return;
             audioLayerDragState = {
               dragTrackId: trackId,
@@ -9274,13 +9572,15 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             if (!cur) return;
             selectAudioTrack(trackId);
             contextAudioTrackId = trackId;
+            const basic = isBasicMode();
             const hasClip = Boolean(cur.clip);
-            mustEl<HTMLButtonElement>('ctxAudioAutoLipSync').disabled = !hasClip;
+            ctxAudioAutoLipSync.disabled = basic || !hasClip;
+            ctxAudioAutoLipSync.classList.toggle('hidden-nest-ui', basic);
             mustEl<HTMLButtonElement>('ctxAudioFit').disabled = !hasClip;
             mustEl<HTMLButtonElement>('ctxAudioMute').disabled = !hasClip;
             mustEl<HTMLButtonElement>('ctxAudioDelete').disabled = !hasClip;
             mustEl<HTMLButtonElement>('ctxAudioMute').textContent = cur.clip?.muted || cur.muted ? 'Unmute Audio' : 'Mute Audio';
-            ctxAudioDeleteTrack.classList.toggle('hidden-nest-ui', curSc.audioTracks.length <= 1);
+            ctxAudioDeleteTrack.classList.toggle('hidden-nest-ui', basic || curSc.audioTracks.length <= 1);
             audioContextMenu.style.display = 'flex';
             const left = Math.min(window.innerWidth - 185, e.clientX);
             const top = Math.min(window.innerHeight - 165, e.clientY);
@@ -9399,15 +9699,18 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       }
     }
 
-    for (const trk of tracks) {
+    const basic = isBasicMode();
+    tracks.forEach((trk, idx) => {
       const dom = audioTrackDomMap.get(trk.id);
-      if (!dom) continue;
-      dom.labelEl.classList.toggle('hidden-track', !state.showAudioTrack);
-      dom.rowEl.classList.toggle('hidden-track', !state.showAudioTrack);
-      dom.rightEl.classList.toggle('hidden-track', !state.showAudioTrack);
-      dom.btnRemove.style.display = tracks.length > 1 ? '' : 'none';
+      if (!dom) return;
+      const showAud = basic ? idx === 0 && state.showAudioTrack : state.showAudioTrack;
+      dom.labelEl.classList.toggle('hidden-track', !showAud);
+      dom.rowEl.classList.toggle('hidden-track', !showAud);
+      dom.rightEl.classList.toggle('hidden-track', !showAud);
+      dom.btnAdd.style.display = basic ? 'none' : '';
+      dom.btnRemove.style.display = !basic && tracks.length > 1 ? '' : 'none';
       if (dom.tagTextSpan.textContent !== trk.name) dom.tagTextSpan.textContent = trk.name;
-    }
+    });
   }
 
   function toggleAudioTrack(forceState?: boolean): void {
@@ -9851,16 +10154,16 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     (e) => {
       if (draggingSceneId) return;
       e.preventDefault();
-      if (app.mode !== 'editor') return;
+      if (app.mode === 'scenes') return;
       const target = e.target as Node | null;
       clearDropActiveHighlights();
-      const bgId = findDropBgLayerId(target);
+      const bgId = !isBasicMode() ? findDropBgLayerId(target) : null;
       const audId = findDropAudioTrackId(target);
       if (bgId) {
         bgTrackDomMap.get(bgId)?.rowEl.classList.add('drop-active');
       } else if (audId) {
         audioTrackDomMap.get(audId)?.rowEl.classList.add('drop-active');
-      } else {
+      } else if (!isBasicMode()) {
         stageContainer.classList.add('drop-active');
       }
     },
@@ -9883,7 +10186,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if (draggingSceneId) return;
       e.preventDefault();
       clearDropActiveHighlights();
-      if (app.mode !== 'editor') return;
+      if (app.mode === 'scenes') return;
 
       const file = e.dataTransfer?.files?.[0];
       if (!file) return;
@@ -9896,6 +10199,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       }
 
       if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name)) {
+        if (isBasicMode()) {
+          onNotify('Image/Bitmap layers are available in Pro mode.');
+          return;
+        }
         const bgId = findDropBgLayerId(target);
         const celId = findDropCelTrackId(target);
         if (bgId || (target && state.activeLayer === 'bg' && stageContainer.contains(target))) {
@@ -9914,7 +10221,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   window.addEventListener(
     'resize',
     () => {
-      if (app.mode === 'editor') renderAudioTrack();
+      if (app.mode !== 'scenes') renderAudioTrack();
       else renderScenesPreview();
     },
     { signal }
@@ -10148,10 +10455,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       for (const [start, vCel] of trk.cels.entries()) {
         if (start >= state.totalFrames) continue;
         const visibleDur = Math.min(vCel.duration, state.totalFrames - start);
-        const isNested = Boolean(vCel.nestId);
+        const basic = isBasicMode();
+        const isNested = !basic && Boolean(vCel.nestId);
         const nestClip = isNested && vCel.nestId ? rootSc.nestedClips.get(vCel.nestId) : null;
-        const tweenKeys = getActivePosKeys(vCel);
-        const hasTween = tweenKeys.length >= 2;
+        const tweenKeys = !basic ? getActivePosKeys(vCel) : [];
+        const hasTween = !basic && tweenKeys.length >= 2;
         const spanBar = document.createElement('div');
         spanBar.className = 'vector-span-bar' + (isNested ? ' is-nested' : '') + (hasTween ? ' has-tween' : '');
         spanBar.style.left = `calc(${(start / state.totalFrames) * 100}% + 2px)`;
@@ -10457,6 +10765,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     nestBreadcrumbBar.classList.toggle('open', inNest);
     btnRemoveFrame.classList.toggle('hidden-nest-ui', !inNest);
 
+    btnModeBasic.disabled = inNest;
+    btnModePro.disabled = inNest;
     btnModeScenes.disabled = inNest;
     mustEl<HTMLButtonElement>('btnToggleMouthTrack').disabled = inNest;
     mustEl<HTMLButtonElement>('btnToggleBgTrack').disabled = inNest;
@@ -10516,6 +10826,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   function openNestedAnimationAt(layer: 'cel' | 'vector', frame: number, trackId?: string): void {
+    if (isBasicMode()) return;
     if (state.isPlaying) togglePlay();
     hideMenus();
     toggleCameraPanel(false);
@@ -10762,6 +11073,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   function unnestFrameAt(layer: 'cel' | 'vector', frame: number): void {
+    if (isBasicMode()) return;
     const rootSc = activeScene();
     if (layer === 'vector') {
       const entry = getVectorCelEntryAt(frame);
@@ -10928,6 +11240,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const cur = getCelOffsetAtFrame(entry.cel, entry.start, contextTargetFrame);
       entry.cel.offsetX = Math.round(cur.offsetX);
       entry.cel.offsetY = Math.round(cur.offsetY);
+      entry.cel.scale = cur.scale === 1 && entry.cel.scale === undefined ? undefined : cur.scale;
       delete entry.cel.posKeys;
       renderTimeline();
       renderStage();
@@ -10940,6 +11253,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const cur = getCelOffsetAtFrame(entry.cel, entry.start, contextTargetFrame);
     entry.cel.offsetX = Math.round(cur.offsetX);
     entry.cel.offsetY = Math.round(cur.offsetY);
+    entry.cel.scale = cur.scale === 1 && entry.cel.scale === undefined ? undefined : cur.scale;
     delete entry.cel.posKeys;
     renderTimeline();
     renderStage();
@@ -11405,7 +11719,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             existing.cel.originX = prev.cel.originX;
             existing.cel.originY = prev.cel.originY;
             existing.cel.rotation = prev.cel.rotation;
-            existing.cel.scale = prev.cel.scale;
+            existing.cel.scale = prevEndOff.scale === 1 && prev.cel.scale === undefined ? undefined : prevEndOff.scale;
             existing.cel.hasInk = prev.cel.hasInk;
             existing.cel.nestId = prev.cel.nestId;
             existing.cel.nestOriginFrame = prev.cel.nestOriginFrame;
@@ -11431,6 +11745,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             if (leftKeys[0]) {
               existing.cel.offsetX = Math.round(leftKeys[0].offsetX);
               existing.cel.offsetY = Math.round(leftKeys[0].offsetY);
+              if (typeof leftKeys[0].scale === 'number') existing.cel.scale = leftKeys[0].scale;
             }
             delete existing.cel.posKeys;
           }
@@ -11454,7 +11769,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           originX = existing.cel.originX;
           originY = existing.cel.originY;
           rotation = existing.cel.rotation;
-          scale = existing.cel.scale;
+          scale = splitOff.scale === 1 && existing.cel.scale === undefined ? undefined : splitOff.scale;
           hasInk = existing.cel.hasInk;
           nestId = existing.cel.nestId;
           nestOriginFrame = existing.cel.nestOriginFrame;
@@ -11514,7 +11829,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             existing.cel.originX = prev.cel.originX;
             existing.cel.originY = prev.cel.originY;
             existing.cel.rotation = prev.cel.rotation;
-            existing.cel.scale = prev.cel.scale;
+            existing.cel.scale = prevEndOff.scale === 1 && prev.cel.scale === undefined ? undefined : prevEndOff.scale;
             existing.cel.hasInk = prev.cel.hasInk;
             existing.cel.nestId = prev.cel.nestId;
             existing.cel.nestOriginFrame = prev.cel.nestOriginFrame;
@@ -11540,6 +11855,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
             if (leftKeys[0]) {
               existing.cel.offsetX = Math.round(leftKeys[0].offsetX);
               existing.cel.offsetY = Math.round(leftKeys[0].offsetY);
+              if (typeof leftKeys[0].scale === 'number') existing.cel.scale = leftKeys[0].scale;
             }
             delete existing.cel.posKeys;
           }
@@ -11564,7 +11880,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           originX = existing.cel.originX;
           originY = existing.cel.originY;
           rotation = existing.cel.rotation;
-          scale = existing.cel.scale;
+          scale = splitOff.scale === 1 && existing.cel.scale === undefined ? undefined : splitOff.scale;
           hasInk = existing.cel.hasInk;
           nestId = existing.cel.nestId;
           nestOriginFrame = existing.cel.nestOriginFrame;
@@ -11666,7 +11982,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     btn.classList.toggle('active', state.loop);
   };
 
-  mustEl<HTMLSelectElement>('fpsSelect').onchange = (e) => {
+  fpsSelect.onchange = (e) => {
+    if (isBasicMode()) {
+      fpsSelect.value = String(app.fps);
+      return;
+    }
     state.fps = Number((e.currentTarget as HTMLSelectElement).value);
     renderAudioTrack();
     if (state.isPlaying) scheduleAudioAtFrame(state.currentFrame);
@@ -11684,12 +12004,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   };
 
   btnOnionBefore.onclick = () => {
+    if (isBasicMode()) return;
     state.onionBefore = !state.onionBefore;
     btnOnionBefore.classList.toggle('active', state.onionBefore);
     renderStage();
   };
 
   btnOnionAfter.onclick = () => {
+    if (isBasicMode()) return;
     state.onionAfter = !state.onionAfter;
     btnOnionAfter.classList.toggle('active', state.onionAfter);
     renderStage();
@@ -11701,6 +12023,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   btnOriginPoint.onclick = () => {
+    if (isBasicMode()) return;
     state.showOriginPoint = !state.showOriginPoint;
     if (!state.showOriginPoint) hoverOriginGizmoPart = null;
     updateOriginPointBtnUI();
@@ -12287,7 +12610,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         return;
       }
 
-      if (app.mode !== 'editor') return;
+      if (app.mode === 'scenes') return;
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -12296,9 +12619,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         e.preventDefault();
         if (state.selectedTrack === 'audio' && state.audio) {
           deleteActiveAudio();
-        } else if (state.selectedTrack === 'mouth') {
+        } else if (!isBasicMode() && state.selectedTrack === 'mouth') {
           deleteMouthKeyAtFrame(state.currentFrame);
-        } else if (state.selectedTrack === 'cam') {
+        } else if (!isBasicMode() && state.selectedTrack === 'cam') {
           if (state.cameraKeys.has(state.currentFrame)) {
             state.cameraKeys.delete(state.currentFrame);
             syncInspectorUI();
@@ -12307,7 +12630,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           }
         } else if (state.selectedTrack === 'vector') {
           deleteVectorCelAtFrame(state.currentFrame);
-        } else if (state.selectedTrack === 'cel') {
+        } else if (!isBasicMode() && state.selectedTrack === 'cel') {
           deleteCelAtFrame(state.currentFrame);
         }
       } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'b') {
@@ -12340,10 +12663,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           renderPalette();
           renderStage();
         }
-      } else if (e.key === '[' || e.code === 'BracketLeft') {
+      } else if (!isBasicMode() && (e.key === '[' || e.code === 'BracketLeft')) {
         e.preventDefault();
         setBrushSize((state.tool === 'nudge' ? state.nudgeRadius - 6 : state.brushSize - 1));
-      } else if (e.key === ']' || e.code === 'BracketRight') {
+      } else if (!isBasicMode() && (e.key === ']' || e.code === 'BracketRight')) {
         e.preventDefault();
         setBrushSize((state.tool === 'nudge' ? state.nudgeRadius + 6 : state.brushSize + 1));
       } else if (e.key === 'ArrowRight' || e.key === '.') {
@@ -13167,10 +13490,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   mustEl<HTMLButtonElement>('btnExportMp4').onclick = () => void exportVideo('mp4');
 
   // Initialize
+  loadSceneIntoEditorUI(activeScene());
   resizeStageCanvas();
-  updateAudioVolumeUI();
-  updateActiveTrackHighlight();
-  renderTimeline();
   goToFrame(0);
 
   return () => {

@@ -51,7 +51,8 @@ export default function App() {
             <span className="brand-name">Keyframes</span>
           </div>
           <div className="studio-seg">
-            <button id="btnModeEditor" className="active">Editor</button>
+            <button id="btnModeBasic" className="active">Basic</button>
+            <button id="btnModePro">Pro</button>
             <button id="btnModeScenes">Scenes</button>
           </div>
           <span id="activeSceneLabel" className="scene-name-tag">Scene 1</span>
@@ -181,13 +182,13 @@ export default function App() {
               <div className="swatches" id="paletteSwatches" />
             </div>
 
-            <div className="size-box">
+            <div className="size-box" id="brushSizeBox">
               <div className="section-title mb-0" id="brushSizeHeading">Size</div>
               <span id="brushSizeVal" className="size-readout">4px</span>
               <input type="range" id="brushSize" min="1" max="32" defaultValue="4" title="Brush/Eraser/Nudge Size ([ and ])" />
             </div>
 
-            <div className="size-box">
+            <div className="size-box" id="closeFillBox">
               <div className="section-title mb-0">Close</div>
               <button id="btnGapCycle" className="gap-btn" title="Automatically close gaps up to this size (up to 64px) when using Fill">Off</button>
             </div>
@@ -298,7 +299,7 @@ export default function App() {
         <section className="timeline-panel" id="timelinePanel">
           <div className="timeline-header" id="timelineHeader" title="Drag up/down to resize timeline (double-click to reset)">
             {/* Left: Track Toggles */}
-            <div className="toolbar-group">
+            <div className="toolbar-group" id="editorLayerTrackGroup">
               <button id="btnAddCelTrack" title="Add Another Bitmap Layer">+ Bitmap</button>
               <button id="btnToggleVectorTrack" title="Show/Hide Vector Layers">Vector</button>
               <button id="btnAddVectorTrack" className="hidden-nest-ui" title="Add Another Vector Layer">+ Vector</button>
@@ -430,7 +431,7 @@ export default function App() {
         <button id="ctxNest" className="ctx-nest-open">Open Nested Animation</button>
         <button id="ctxUnnest" className="hidden-nest-ui">Unnest (Flatten Frame)</button>
         <button id="ctxClearTween" className="hidden-nest-ui">Clear Motion Tween</button>
-        <div className="ctx-divider" />
+        <div className="ctx-divider" id="ctxNestTweenDivider" />
         <button id="ctxDelete" className="ctx-danger">Delete Frame</button>
         <button id="ctxBlank">+ Blank Keyframe</button>
         <button id="ctxDup">Duplicate Previous</button>

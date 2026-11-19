@@ -175,9 +175,14 @@ button, select {
   transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
 }
 
-button:hover, select:hover {
+button:hover:not(:disabled), select:hover:not(:disabled) {
   background: var(--bg-hover);
   border-color: var(--border-strong);
+}
+
+button:disabled, select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 button.active {
