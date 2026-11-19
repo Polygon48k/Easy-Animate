@@ -11,9 +11,30 @@ export interface MoveUndoEntry {
   type: 'move';
   offsetX: number;
   offsetY: number;
+  rotation?: number;
+  originX?: number;
+  originY?: number;
 }
 
-export type UndoEntry = PixelUndoEntry | MoveUndoEntry;
+export interface CelPosKey {
+  relFrame: number;
+  offsetX: number;
+  offsetY: number;
+  ctrlDx?: number;
+  ctrlDy?: number;
+}
+
+export interface TweenUndoEntry {
+  type: 'tween';
+  offsetX: number;
+  offsetY: number;
+  posKeys?: CelPosKey[];
+  rotation?: number;
+  originX?: number;
+  originY?: number;
+}
+
+export type UndoEntry = PixelUndoEntry | MoveUndoEntry | TweenUndoEntry;
 
 export interface Cel {
   canvas: HTMLCanvasElement;
@@ -22,6 +43,10 @@ export interface Cel {
   duration: number;
   offsetX: number;
   offsetY: number;
+  originX?: number;
+  originY?: number;
+  rotation?: number;
+  posKeys?: CelPosKey[];
   nestId?: string;
   nestOriginFrame?: number;
 }
@@ -55,8 +80,13 @@ export type VectorUndoEntry =
       hasInk: boolean;
       offsetX: number;
       offsetY: number;
+      posKeys?: CelPosKey[];
+      rotation?: number;
+      originX?: number;
+      originY?: number;
     }
-  | MoveUndoEntry;
+  | MoveUndoEntry
+  | TweenUndoEntry;
 
 export interface VectorCel {
   items: VectorItem[];
@@ -65,11 +95,31 @@ export interface VectorCel {
   duration: number;
   offsetX: number;
   offsetY: number;
+  originX?: number;
+  originY?: number;
+  rotation?: number;
+  posKeys?: CelPosKey[];
   nestId?: string;
   nestOriginFrame?: number;
 }
 
+export interface VectorTrack {
+  id: string;
+  name: string;
+  visible: boolean;
+  cels: Map<number, VectorCel>;
+}
+
+export interface CelTrack {
+  id: string;
+  name: string;
+  visible: boolean;
+  cels: Map<number, Cel>;
+}
+
 export interface BgLayer {
+  id: string;
+  trackName: string;
   canvas: HTMLCanvasElement;
   undoStack: UndoEntry[];
   hasInk: boolean;
@@ -77,6 +127,9 @@ export interface BgLayer {
   name: string;
   offsetX: number;
   offsetY: number;
+  originX?: number;
+  originY?: number;
+  rotation?: number;
 }
 
 export interface Viseme {
@@ -90,9 +143,14 @@ export interface MouthKey {
   x: number;
   y: number;
   scale: number;
+  originDx?: number;
+  originDy?: number;
+  rotation?: number;
 }
 
 export interface MouthLayer {
+  id: string;
+  name: string;
   visible: boolean;
   keys: Map<number, MouthKey>;
   visemes: Viseme[];
@@ -116,6 +174,14 @@ export interface AudioClip {
   volume: number;
 }
 
+export interface AudioTrack {
+  id: string;
+  name: string;
+  volume: number;
+  muted: boolean;
+  clip: AudioClip | null;
+}
+
 export interface LoopRange {
   start: number;
   end: number;
@@ -128,8 +194,12 @@ export interface NestedClip {
   totalFrames: number;
   currentFrame: number;
   loopRange: LoopRange | null;
-  cels: Map<number, Cel>;
-  vectorCels: Map<number, VectorCel>;
+  celTracks: CelTrack[];
+  activeCelTrackId: string;
+  vectorTracks: VectorTrack[];
+  activeVectorTrackId: string;
+  layerOrder: string[];
+  layerParents: Record<string, string | null>;
 }
 
 export interface Scene {
@@ -138,13 +208,20 @@ export interface Scene {
   totalFrames: number;
   currentFrame: number;
   loopRange: LoopRange | null;
-  cels: Map<number, Cel>;
-  vectorCels: Map<number, VectorCel>;
+  celTracks: CelTrack[];
+  activeCelTrackId: string;
+  vectorTracks: VectorTrack[];
+  activeVectorTrackId: string;
+  bgLayers: BgLayer[];
+  activeBgLayerId: string;
+  mouthLayers: MouthLayer[];
+  activeMouthLayerId: string;
+  layerOrder: string[];
+  layerParents: Record<string, string | null>;
   nestedClips: Map<string, NestedClip>;
-  bgLayer: BgLayer;
-  mouthLayer: MouthLayer;
   cameraKeys: Map<number, CameraKey>;
-  audio: AudioClip | null;
+  audioTracks: AudioTrack[];
+  activeAudioTrackId: string;
 }
 
 interface BrushMask {
@@ -253,37 +330,98 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     });
   }
 
+  function createVectorTrack(name = 'Vector 1', seedFirstCel = true): VectorTrack {
+    const cels = new Map<number, VectorCel>();
+    if (seedFirstCel) {
+      cels.set(0, { items: [], undoStack: [], hasInk: false, duration: 1, offsetX: 0, offsetY: 0 });
+    }
+    return {
+      id: 'vtrk_' + Math.random().toString(36).slice(2, 10),
+      name,
+      visible: true,
+      cels,
+    };
+  }
+
+  function createCelTrack(name = 'Bitmap 1', seedFirstCel = true): CelTrack {
+    const cels = new Map<number, Cel>();
+    if (seedFirstCel) {
+      cels.set(0, { canvas: createCelCanvas(), undoStack: [], hasInk: false, duration: 1, offsetX: 0, offsetY: 0 });
+    }
+    return {
+      id: 'ctrk_' + Math.random().toString(36).slice(2, 10),
+      name,
+      visible: true,
+      cels,
+    };
+  }
+
+  function createBgLayer(trackName = 'Background 1', visible = false): BgLayer {
+    return {
+      id: 'bg_' + Math.random().toString(36).slice(2, 10),
+      trackName,
+      canvas: createCelCanvas(),
+      undoStack: [],
+      hasInk: false,
+      visible,
+      name: '',
+      offsetX: 0,
+      offsetY: 0,
+    };
+  }
+
+  function createMouthLayer(name = 'Mouth 1', visible = false): MouthLayer {
+    return {
+      id: 'mth_' + Math.random().toString(36).slice(2, 10),
+      name,
+      visible,
+      keys: new Map(),
+      visemes: createDefaultVisemes(),
+    };
+  }
+
+  function createAudioTrack(name = 'Audio 1'): AudioTrack {
+    return {
+      id: 'aud_' + Math.random().toString(36).slice(2, 10),
+      name,
+      volume: 1,
+      muted: false,
+      clip: null,
+    };
+  }
+
   function makeScene(name: string): Scene {
-    const s: Scene = {
+    const firstCelTrack = createCelTrack('Bitmap 1', true);
+    const firstVectorTrack = createVectorTrack('Vector 1', true);
+    const firstBgLayer = createBgLayer('Background 1', false);
+    const firstMouthLayer = createMouthLayer('Mouth 1', false);
+    const firstAudioTrack = createAudioTrack('Audio 1');
+    return {
       id: 'sc_' + Math.random().toString(36).slice(2, 10),
       name,
       totalFrames: 24,
       currentFrame: 0,
       loopRange: null,
-      cels: new Map(),
-      vectorCels: new Map(),
+      celTracks: [firstCelTrack],
+      activeCelTrackId: firstCelTrack.id,
+      vectorTracks: [firstVectorTrack],
+      activeVectorTrackId: firstVectorTrack.id,
+      bgLayers: [firstBgLayer],
+      activeBgLayerId: firstBgLayer.id,
+      mouthLayers: [firstMouthLayer],
+      activeMouthLayerId: firstMouthLayer.id,
+      layerOrder: [
+        `mouth:${firstMouthLayer.id}`,
+        `vector:${firstVectorTrack.id}`,
+        `cel:${firstCelTrack.id}`,
+        `bg:${firstBgLayer.id}`,
+      ],
+      layerParents: {},
       nestedClips: new Map(),
-      bgLayer: {
-        canvas: createCelCanvas(),
-        undoStack: [],
-        hasInk: false,
-        visible: false,
-        name: '',
-        offsetX: 0,
-        offsetY: 0,
-      },
-      mouthLayer: {
-        visible: false,
-        keys: new Map(),
-        visemes: createDefaultVisemes(),
-      },
       cameraKeys: new Map(),
-      audio: null,
+      audioTracks: [firstAudioTrack],
+      activeAudioTrackId: firstAudioTrack.id,
     };
-    const c = createCelCanvas();
-    s.cels.set(0, { canvas: c, undoStack: [], hasInk: false, duration: 1, offsetX: 0, offsetY: 0 });
-    s.vectorCels.set(0, { items: [], undoStack: [], hasInk: false, duration: 1, offsetX: 0, offsetY: 0 });
-    return s;
   }
 
   const app = {
@@ -306,6 +444,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     clipId: string;
     returnFrame: number;
     returnLayer: 'cel' | 'vector';
+    returnCelTrackId?: string;
+    returnVectorTrackId?: string;
     savedTracks: {
       showVectorTrack: boolean;
       showBgTrack: boolean;
@@ -328,6 +468,71 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     return activeNestedClip() || activeScene();
   }
 
+  function getActiveCelTrackInTarget(target: Scene | NestedClip): CelTrack {
+    if (target.celTracks.length === 0) {
+      const trk = createCelTrack('Bitmap 1', true);
+      target.celTracks.push(trk);
+      target.activeCelTrackId = trk.id;
+      return trk;
+    }
+    const found = target.celTracks.find((t) => t.id === target.activeCelTrackId);
+    if (found) return found;
+    target.activeCelTrackId = target.celTracks[0].id;
+    return target.celTracks[0];
+  }
+
+  function getActiveVectorTrackInTarget(target: Scene | NestedClip): VectorTrack {
+    if (target.vectorTracks.length === 0) {
+      const trk = createVectorTrack('Vector 1', true);
+      target.vectorTracks.push(trk);
+      target.activeVectorTrackId = trk.id;
+      return trk;
+    }
+    const found = target.vectorTracks.find((t) => t.id === target.activeVectorTrackId);
+    if (found) return found;
+    target.activeVectorTrackId = target.vectorTracks[0].id;
+    return target.vectorTracks[0];
+  }
+
+  function getActiveBgLayerInScene(sc: Scene): BgLayer {
+    if (sc.bgLayers.length === 0) {
+      const bg = createBgLayer('Background 1', state.showBgTrack);
+      sc.bgLayers.push(bg);
+      sc.activeBgLayerId = bg.id;
+      return bg;
+    }
+    const found = sc.bgLayers.find((b) => b.id === sc.activeBgLayerId);
+    if (found) return found;
+    sc.activeBgLayerId = sc.bgLayers[0].id;
+    return sc.bgLayers[0];
+  }
+
+  function getActiveMouthLayerInScene(sc: Scene): MouthLayer {
+    if (sc.mouthLayers.length === 0) {
+      const ml = createMouthLayer('Mouth 1', state.showMouthTrack);
+      sc.mouthLayers.push(ml);
+      sc.activeMouthLayerId = ml.id;
+      return ml;
+    }
+    const found = sc.mouthLayers.find((m) => m.id === sc.activeMouthLayerId);
+    if (found) return found;
+    sc.activeMouthLayerId = sc.mouthLayers[0].id;
+    return sc.mouthLayers[0];
+  }
+
+  function getActiveAudioTrackInScene(sc: Scene): AudioTrack {
+    if (sc.audioTracks.length === 0) {
+      const at = createAudioTrack('Audio 1');
+      sc.audioTracks.push(at);
+      sc.activeAudioTrackId = at.id;
+      return at;
+    }
+    const found = sc.audioTracks.find((a) => a.id === sc.activeAudioTrackId);
+    if (found) return found;
+    sc.activeAudioTrackId = sc.audioTracks[0].id;
+    return sc.audioTracks[0];
+  }
+
   const state = {
     isPlaying: false,
     onionSkin: false,
@@ -335,6 +540,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     onionAfter: false,
     showCelLayer: true,
     showVectorLayer: true,
+    vectorPixelPreview: false,
     applyCamera: true,
     showVectorTrack: false,
     showBgTrack: false,
@@ -374,26 +580,40 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     set loopRange(v: LoopRange | null) {
       activeTimelineTarget().loopRange = v;
     },
+    get activeCelTrack(): CelTrack {
+      return getActiveCelTrackInTarget(activeTimelineTarget());
+    },
     get cels() {
-      return activeTimelineTarget().cels;
+      return getActiveCelTrackInTarget(activeTimelineTarget()).cels;
+    },
+    get activeVectorTrack(): VectorTrack {
+      return getActiveVectorTrackInTarget(activeTimelineTarget());
     },
     get vectorCels() {
-      return activeTimelineTarget().vectorCels;
+      return getActiveVectorTrackInTarget(activeTimelineTarget()).cels;
     },
-    get bgLayer() {
-      return activeScene().bgLayer;
+    get bgLayer(): BgLayer {
+      return getActiveBgLayerInScene(activeScene());
     },
-    get mouthLayer() {
-      return activeScene().mouthLayer;
+    get mouthLayer(): MouthLayer {
+      return getActiveMouthLayerInScene(activeScene());
     },
     get cameraKeys() {
       return activeScene().cameraKeys;
     },
+    get activeAudioTrack(): AudioTrack {
+      return getActiveAudioTrackInScene(activeScene());
+    },
     get audio() {
-      return activeScene().audio;
+      return getActiveAudioTrackInScene(activeScene()).clip;
     },
     set audio(v: AudioClip | null) {
-      activeScene().audio = v;
+      const trk = getActiveAudioTrackInScene(activeScene());
+      trk.clip = v;
+      if (v) {
+        trk.volume = typeof v.volume === 'number' ? v.volume : trk.volume;
+        trk.muted = Boolean(v.muted);
+      }
     },
     get fps() {
       return app.fps;
@@ -439,45 +659,46 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   const loopHighlightOverlay = mustEl<HTMLDivElement>('loopHighlightOverlay');
   const loopRangeBadge = mustEl<HTMLSpanElement>('loopRangeBadge');
   const rulerRow = mustEl<HTMLDivElement>('rulerRow');
-  const celTrackLabel = mustEl<HTMLDivElement>('celTrackLabel');
-  const celTrackRow = mustEl<HTMLDivElement>('celTrackRow');
-  const vectorTrackLabel = mustEl<HTMLDivElement>('vectorTrackLabel');
-  const vectorTrackRow = mustEl<HTMLDivElement>('vectorTrackRow');
-  const mouthTrackLabel = mustEl<HTMLDivElement>('mouthTrackLabel');
-  const mouthTrackRow = mustEl<HTMLDivElement>('mouthTrackRow');
-  const bgTrackLabel = mustEl<HTMLDivElement>('bgTrackLabel');
-  const bgTrackRow = mustEl<HTMLDivElement>('bgTrackRow');
-  const bgSpanBar = mustEl<HTMLDivElement>('bgSpanBar');
-  const audioTrackLabel = mustEl<HTMLDivElement>('audioTrackLabel');
-  const audioVolFill = mustEl<HTMLDivElement>('audioVolFill');
-  const audioTrackRow = mustEl<HTMLDivElement>('audioTrackRow');
-  const audioWaveCanvas = mustEl<HTMLCanvasElement>('audioWaveCanvas');
-  const audioEmptyHint = mustEl<HTMLDivElement>('audioEmptyHint');
-  const audioRecBadge = mustEl<HTMLDivElement>('audioRecBadge');
-  const audioClipBox = mustEl<HTMLDivElement>('audioClipBox');
-  const audioClipLabel = mustEl<HTMLDivElement>('audioClipLabel');
+  const layerLabelsContainer = mustEl<HTMLDivElement>('layerLabelsContainer');
+  const layerRowsContainer = mustEl<HTMLDivElement>('layerRowsContainer');
+  const layerRightsContainer = mustEl<HTMLDivElement>('layerRightsContainer');
+  const audioLabelsContainer = mustEl<HTMLDivElement>('audioLabelsContainer');
+  const audioRowsContainer = mustEl<HTMLDivElement>('audioRowsContainer');
+  const audioRightsContainer = mustEl<HTMLDivElement>('audioRightsContainer');
+  const btnAddCelTrack = mustEl<HTMLButtonElement>('btnAddCelTrack');
+  const btnAddVectorTrack = mustEl<HTMLButtonElement>('btnAddVectorTrack');
+  const btnAddMouthTrack = mustEl<HTMLButtonElement>('btnAddMouthTrack');
+  const btnAddBgTrack = mustEl<HTMLButtonElement>('btnAddBgTrack');
+  const btnAddAudioTrack = mustEl<HTMLButtonElement>('btnAddAudioTrack');
   const camTrackRow = mustEl<HTMLDivElement>('camTrackRow');
   const camTrackLabel = mustEl<HTMLDivElement>('camTrackLabel');
-  const mouthTrackRight = mustEl<HTMLDivElement>('mouthTrackRight');
-  const vectorTrackRight = mustEl<HTMLDivElement>('vectorTrackRight');
-  const celTrackRight = mustEl<HTMLDivElement>('celTrackRight');
-  const bgTrackRight = mustEl<HTMLDivElement>('bgTrackRight');
-  const audioTrackRight = mustEl<HTMLDivElement>('audioTrackRight');
   const camTrackRight = mustEl<HTMLDivElement>('camTrackRight');
   const playheadLine = mustEl<HTMLDivElement>('playheadLine');
   const celContextMenu = mustEl<HTMLDivElement>('celContextMenu');
   const ctxNest = mustEl<HTMLButtonElement>('ctxNest');
   const ctxExitNest = mustEl<HTMLButtonElement>('ctxExitNest');
   const ctxUnnest = mustEl<HTMLButtonElement>('ctxUnnest');
+  const ctxClearTween = mustEl<HTMLButtonElement>('ctxClearTween');
   const mouthContextMenu = mustEl<HTMLDivElement>('mouthContextMenu');
   const audioContextMenu = mustEl<HTMLDivElement>('audioContextMenu');
+  const ctxAudioDeleteTrack = mustEl<HTMLButtonElement>('ctxAudioDeleteTrack');
   const camContextMenu = mustEl<HTMLDivElement>('camContextMenu');
+  const layerContextMenu = mustEl<HTMLDivElement>('layerContextMenu');
+  const ctxLayerAddChildVec = mustEl<HTMLButtonElement>('ctxLayerAddChildVec');
+  const ctxLayerAddChildCel = mustEl<HTMLButtonElement>('ctxLayerAddChildCel');
+  const ctxLayerJoinAbove = mustEl<HTMLButtonElement>('ctxLayerJoinAbove');
+  const ctxLayerDetach = mustEl<HTMLButtonElement>('ctxLayerDetach');
+  const ctxLayerRename = mustEl<HTMLButtonElement>('ctxLayerRename');
+  const ctxLayerClear = mustEl<HTMLButtonElement>('ctxLayerClear');
+  const ctxLayerDelete = mustEl<HTMLButtonElement>('ctxLayerDelete');
   const paletteSwatches = mustEl<HTMLDivElement>('paletteSwatches');
+  const btnVectorPixelPreview = mustEl<HTMLButtonElement>('btnVectorPixelPreview');
 
   const mouthWidget = mustEl<HTMLDivElement>('mouthWidget');
   const mouthPreviewCanvas = mustEl<HTMLCanvasElement>('mouthPreviewCanvas');
   const mouthFrameBox = mustEl<HTMLDivElement>('mouthFrameBox');
   const mouthFrameLabel = mustEl<HTMLSpanElement>('mouthFrameLabel');
+  const mouthLayerNameBadge = mustEl<HTMLSpanElement>('mouthLayerNameBadge');
   const mouthSheetPop = mustEl<HTMLDivElement>('mouthSheetPop');
   const mouthSheetGrid = mustEl<HTMLDivElement>('mouthSheetGrid');
   const btnMouthDraw = mustEl<HTMLButtonElement>('btnMouthDraw');
@@ -554,26 +775,44 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   function loadSceneIntoEditorUI(sc: Scene): void {
     exitAllNests(false);
     activeSceneLabel.textContent = sc.name;
-    const hasAudio = Boolean(sc.audio);
-    if (sc.audio) {
-      if (typeof sc.audio.volume !== 'number') sc.audio.volume = 1;
-      state.audioVolume = sc.audio.volume;
-    }
+    const activeAt = getActiveAudioTrackInScene(sc);
+    state.audioVolume = activeAt.clip && typeof activeAt.clip.volume === 'number' ? activeAt.clip.volume : activeAt.volume;
     updateAudioVolumeUI();
-    if (hasAudio && !state.showAudioTrack) toggleAudioTrack(true);
-    if (sc.bgLayer.hasInk && !state.showBgTrack) toggleBgTrack(true);
-    if ((sc.mouthLayer.visible || sc.mouthLayer.keys.size > 0) && !state.showMouthTrack) toggleMouthTrack(true);
+
+    const hasAudioContent = sc.audioTracks.length > 1 || sc.audioTracks.some((t) => Boolean(t.clip));
+    if (hasAudioContent && !state.showAudioTrack) toggleAudioTrack(true);
+    const hasBgContent = sc.bgLayers.length > 1 || sc.bgLayers.some((b) => b.hasInk);
+    if (hasBgContent && !state.showBgTrack) toggleBgTrack(true);
+    const hasMouthContent = sc.mouthLayers.length > 1 || sc.mouthLayers.some((m) => m.visible || m.keys.size > 0);
+    if (hasMouthContent && !state.showMouthTrack) toggleMouthTrack(true);
+
     const hasVectorContent =
-      sc.vectorCels.size > 1 || Array.from(sc.vectorCels.values()).some((vc) => vc.hasInk || vc.items.length > 0 || Boolean(vc.nestId));
+      sc.vectorTracks.length > 1 ||
+      sc.vectorTracks.some(
+        (trk) =>
+          trk.cels.size > 1 ||
+          Array.from(trk.cels.values()).some((vc) => vc.hasInk || vc.items.length > 0 || Boolean(vc.nestId))
+      );
     if (hasVectorContent && !state.showVectorTrack) toggleVectorTrack(true);
     if (sc.cameraKeys.size > 0 && !state.showCamTrack) toggleCamTrack(true);
+    syncLayerTrackContainers();
+    syncAudioTrackContainers();
     updateBgUI();
     updateMouthWidget();
     updateActiveTrackHighlight();
+    updateTimelinePanelHeight();
     renderNestBreadcrumbUI();
     syncInspectorUI();
     renderTimeline();
     renderStage();
+  }
+
+  function shiftPosKeys(keys: CelPosKey[] | undefined, shiftX: number, shiftY: number): void {
+    if (!keys) return;
+    for (const k of keys) {
+      k.offsetX += shiftX;
+      k.offsetY += shiftY;
+    }
   }
 
   function setWorldResolution(newW: number, newH: number): void {
@@ -585,19 +824,55 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     WORLD_H = newH;
 
     for (const sc of app.scenes) {
-      for (const cel of sc.cels.values()) {
-        cel.offsetX += shiftX;
-        cel.offsetY += shiftY;
+      for (const cTrk of sc.celTracks) {
+        for (const cel of cTrk.cels.values()) {
+          cel.offsetX += shiftX;
+          cel.offsetY += shiftY;
+          if (typeof cel.originX === 'number') cel.originX += shiftX;
+          if (typeof cel.originY === 'number') cel.originY += shiftY;
+          shiftPosKeys(cel.posKeys, shiftX, shiftY);
+        }
       }
-      for (const vCel of sc.vectorCels.values()) {
-        vCel.offsetX += shiftX;
-        vCel.offsetY += shiftY;
+      for (const trk of sc.vectorTracks) {
+        for (const vCel of trk.cels.values()) {
+          vCel.offsetX += shiftX;
+          vCel.offsetY += shiftY;
+          if (typeof vCel.originX === 'number') vCel.originX += shiftX;
+          if (typeof vCel.originY === 'number') vCel.originY += shiftY;
+          shiftPosKeys(vCel.posKeys, shiftX, shiftY);
+        }
       }
-      sc.bgLayer.offsetX += shiftX;
-      sc.bgLayer.offsetY += shiftY;
-      for (const mk of sc.mouthLayer.keys.values()) {
-        mk.x += shiftX;
-        mk.y += shiftY;
+      for (const clip of sc.nestedClips.values()) {
+        for (const cTrk of clip.celTracks) {
+          for (const cel of cTrk.cels.values()) {
+            cel.offsetX += shiftX;
+            cel.offsetY += shiftY;
+            if (typeof cel.originX === 'number') cel.originX += shiftX;
+            if (typeof cel.originY === 'number') cel.originY += shiftY;
+            shiftPosKeys(cel.posKeys, shiftX, shiftY);
+          }
+        }
+        for (const trk of clip.vectorTracks) {
+          for (const vCel of trk.cels.values()) {
+            vCel.offsetX += shiftX;
+            vCel.offsetY += shiftY;
+            if (typeof vCel.originX === 'number') vCel.originX += shiftX;
+            if (typeof vCel.originY === 'number') vCel.originY += shiftY;
+            shiftPosKeys(vCel.posKeys, shiftX, shiftY);
+          }
+        }
+      }
+      for (const bg of sc.bgLayers) {
+        bg.offsetX += shiftX;
+        bg.offsetY += shiftY;
+        if (typeof bg.originX === 'number') bg.originX += shiftX;
+        if (typeof bg.originY === 'number') bg.originY += shiftY;
+      }
+      for (const ml of sc.mouthLayers) {
+        for (const mk of ml.keys.values()) {
+          mk.x += shiftX;
+          mk.y += shiftY;
+        }
       }
     }
 
@@ -620,6 +895,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       sizeMenu.classList.remove('open');
     };
   });
+
+  let hoverStagePt: Point2D | null = null;
+  let isRightErasing = false;
+  let hoverOriginGizmoPart: 'origin' | 'rotateHandle' | null = null;
 
   function resizeStageCanvas(): void {
     const w = Math.max(100, stageContainer.clientWidth);
@@ -668,8 +947,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   mustEl<HTMLButtonElement>('btnCloseCamPanel').onclick = () => toggleCameraPanel(false);
 
-  function getCelEntryInScene(sc: Scene | NestedClip, frame: number): { start: number; cel: Cel } | null {
-    for (const [start, cel] of sc.cels.entries()) {
+  function getCelEntryInMap(celsMap: Map<number, Cel>, frame: number): { start: number; cel: Cel } | null {
+    for (const [start, cel] of celsMap.entries()) {
       if (frame >= start && frame < start + cel.duration) {
         return { start, cel };
       }
@@ -677,64 +956,349 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     return null;
   }
 
-  function getCelEntryAt(frame: number): { start: number; cel: Cel } | null {
-    return getCelEntryInScene(activeTimelineTarget(), frame);
+  function getCelEntryInScene(sc: Scene | NestedClip, frame: number): { start: number; cel: Cel } | null {
+    return getCelEntryInMap(getActiveCelTrackInTarget(sc).cels, frame);
   }
 
-  function getSortedCelStarts(): number[] {
-    return Array.from(state.cels.keys()).sort((a, b) => a - b);
+  function getCelEntryAt(frame: number, celsMap: Map<number, Cel> = state.cels): { start: number; cel: Cel } | null {
+    return getCelEntryInMap(celsMap, frame);
   }
 
-  function getPrevCelBefore(frame: number): { start: number; cel: Cel } | null {
-    const starts = getSortedCelStarts();
+  function getSortedCelStarts(celsMap: Map<number, Cel> = state.cels): number[] {
+    return Array.from(celsMap.keys()).sort((a, b) => a - b);
+  }
+
+  function getPrevCelBefore(frame: number, celsMap: Map<number, Cel> = state.cels): { start: number; cel: Cel } | null {
+    const starts = getSortedCelStarts(celsMap);
     let best: { start: number; cel: Cel } | null = null;
     for (const s of starts) {
       if (s < frame) {
-        const cel = state.cels.get(s);
+        const cel = celsMap.get(s);
         if (cel) best = { start: s, cel };
       }
     }
     return best;
   }
 
-  function getNextCelAfter(frame: number): { start: number; cel: Cel } | null {
-    const starts = getSortedCelStarts();
+  function getNextCelAfter(frame: number, celsMap: Map<number, Cel> = state.cels): { start: number; cel: Cel } | null {
+    const starts = getSortedCelStarts(celsMap);
     for (const s of starts) {
       if (s > frame) {
-        const cel = state.cels.get(s);
+        const cel = celsMap.get(s);
         if (cel) return { start: s, cel };
       }
     }
     return null;
   }
 
-  function ensureCelAt(frame: number, clonePrev = false): { start: number; cel: Cel } {
-    const existing = getCelEntryAt(frame);
+  function ensureCelAt(frame: number, clonePrev = false, celsMap: Map<number, Cel> = state.cels): { start: number; cel: Cel } {
+    const existing = getCelEntryAt(frame, celsMap);
     if (existing) return existing;
 
     let canvas = createCelCanvas();
     let offsetX = 0;
     let offsetY = 0;
+    let originX: number | undefined;
+    let originY: number | undefined;
+    let rotation: number | undefined;
     let hasInk = false;
     let nestId: string | undefined;
     let nestOriginFrame: number | undefined;
 
     if (clonePrev) {
-      const prev = getPrevCelBefore(frame);
+      const prev = getPrevCelBefore(frame, celsMap);
       if (prev) {
+        const endOff = getCelOffsetAtFrame(prev.cel, prev.start, prev.start + prev.cel.duration - 1);
         canvas = createCelCanvas(prev.cel.canvas.width, prev.cel.canvas.height);
         canvas.getContext('2d')?.drawImage(prev.cel.canvas, 0, 0);
-        offsetX = prev.cel.offsetX;
-        offsetY = prev.cel.offsetY;
+        offsetX = Math.round(endOff.offsetX);
+        offsetY = Math.round(endOff.offsetY);
+        originX = prev.cel.originX;
+        originY = prev.cel.originY;
+        rotation = prev.cel.rotation;
         hasInk = prev.cel.hasInk;
         nestId = prev.cel.nestId;
         nestOriginFrame = prev.cel.nestOriginFrame;
       }
     }
 
-    const cel: Cel = { canvas, undoStack: [], hasInk, duration: 1, offsetX, offsetY, nestId, nestOriginFrame };
-    state.cels.set(frame, cel);
+    const cel: Cel = {
+      canvas,
+      undoStack: [],
+      hasInk,
+      duration: 1,
+      offsetX,
+      offsetY,
+      originX,
+      originY,
+      rotation,
+      nestId,
+      nestOriginFrame,
+    };
+    celsMap.set(frame, cel);
     return { start: frame, cel };
+  }
+
+  function clonePosKeys(keys?: CelPosKey[]): CelPosKey[] | undefined {
+    if (!keys || keys.length === 0) return undefined;
+    return keys.map((k) => ({ ...k }));
+  }
+
+  function sortPosKeys(cel: Cel | VectorCel): void {
+    if (!cel.posKeys) return;
+    cel.posKeys.sort((a, b) => a.relFrame - b.relFrame);
+  }
+
+  function evalSegmentPointWithCtrl(
+    a: CelPosKey,
+    b: CelPosKey,
+    ctrlDx: number,
+    ctrlDy: number,
+    t: number
+  ): { x: number; y: number } {
+    const mx = (a.offsetX + b.offsetX) * 0.5;
+    const my = (a.offsetY + b.offsetY) * 0.5;
+    const cx = mx + ctrlDx;
+    const cy = my + ctrlDy;
+    const u = 1 - t;
+    return {
+      x: u * u * a.offsetX + 2 * u * t * cx + t * t * b.offsetX,
+      y: u * u * a.offsetY + 2 * u * t * cy + t * t * b.offsetY,
+    };
+  }
+
+  function evalSegmentPoint(a: CelPosKey, b: CelPosKey, t: number): { x: number; y: number } {
+    return evalSegmentPointWithCtrl(a, b, a.ctrlDx ?? 0, a.ctrlDy ?? 0, t);
+  }
+
+  function getActivePosKeys(cel: Cel | VectorCel): CelPosKey[] {
+    if (!cel.posKeys || cel.posKeys.length === 0) return [];
+    const maxRel = Math.max(0, cel.duration - 1);
+    return cel.posKeys.filter((k) => k.relFrame >= 0 && k.relFrame <= maxRel);
+  }
+
+  function getCelOffsetAtFrame(cel: Cel | VectorCel, celStart: number, frame: number): { offsetX: number; offsetY: number } {
+    const keys = getActivePosKeys(cel);
+    if (keys.length === 0) return { offsetX: cel.offsetX, offsetY: cel.offsetY };
+    const maxRel = Math.max(0, cel.duration - 1);
+    const relFrame = Math.max(0, Math.min(maxRel, frame - celStart));
+    if (keys.length === 1 || relFrame <= keys[0].relFrame) {
+      return { offsetX: keys[0].offsetX, offsetY: keys[0].offsetY };
+    }
+    const last = keys[keys.length - 1];
+    if (relFrame >= last.relFrame) {
+      return { offsetX: last.offsetX, offsetY: last.offsetY };
+    }
+    for (let i = 0; i < keys.length - 1; i++) {
+      const a = keys[i];
+      const b = keys[i + 1];
+      if (relFrame >= a.relFrame && relFrame <= b.relFrame) {
+        if (relFrame === a.relFrame || b.relFrame === a.relFrame) {
+          return { offsetX: a.offsetX, offsetY: a.offsetY };
+        }
+        if (relFrame === b.relFrame) {
+          return { offsetX: b.offsetX, offsetY: b.offsetY };
+        }
+        const t = (relFrame - a.relFrame) / (b.relFrame - a.relFrame);
+        const pt = evalSegmentPoint(a, b, t);
+        return { offsetX: pt.x, offsetY: pt.y };
+      }
+    }
+    return { offsetX: cel.offsetX, offsetY: cel.offsetY };
+  }
+
+  function pushTweenUndo(cel: Cel | VectorCel): void {
+    const entry: TweenUndoEntry = {
+      type: 'tween',
+      offsetX: cel.offsetX,
+      offsetY: cel.offsetY,
+      posKeys: clonePosKeys(cel.posKeys),
+      rotation: cel.rotation,
+      originX: cel.originX,
+      originY: cel.originY,
+    };
+    cel.undoStack.push(entry as never);
+    if (cel.undoStack.length > 25) cel.undoStack.shift();
+  }
+
+  type MotionPathHit =
+    | { kind: 'key'; keyIndex: number }
+    | { kind: 'curveHandle'; segIndex: number; t: number }
+    | { kind: 'segment'; segIndex: number; t: number };
+
+  let hoverMotionHit: MotionPathHit | null = null;
+  let celAnchorCache = new WeakMap<
+    Cel,
+    { w: number; h: number; hasInk: boolean; nestId?: string; undoLen: number; ax: number; ay: number }
+  >();
+  let vectorAnchorCache = new WeakMap<
+    VectorCel,
+    { itemLen: number; hasInk: boolean; nestId?: string; undoLen: number; ax: number; ay: number }
+  >();
+
+  function computeCanvasInkCenter(canvas: HTMLCanvasElement): { ax: number; ay: number } | null {
+    const cctx = canvas.getContext('2d');
+    if (!cctx) return null;
+    const w = canvas.width;
+    const h = canvas.height;
+    if (w <= 0 || h <= 0) return null;
+    const data = cctx.getImageData(0, 0, w, h).data;
+    let minX = w;
+    let minY = h;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < h; y += 4) {
+      const row = y * w * 4;
+      for (let x = 0; x < w; x += 4) {
+        if (data[row + x * 4 + 3] > 8) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX || maxY < minY) return null;
+    return { ax: (minX + maxX) * 0.5, ay: (minY + maxY) * 0.5 };
+  }
+
+  function getCelVisualAnchor(rootSc: Scene, cel: Cel): { ax: number; ay: number } {
+    const cached = celAnchorCache.get(cel);
+    if (
+      cached &&
+      cached.w === cel.canvas.width &&
+      cached.h === cel.canvas.height &&
+      cached.hasInk === cel.hasInk &&
+      cached.nestId === cel.nestId &&
+      cached.undoLen === cel.undoStack.length
+    ) {
+      return { ax: cached.ax, ay: cached.ay };
+    }
+    let center: { ax: number; ay: number } | null = null;
+    if (cel.nestId) {
+      const c = rasterizeNestedClipToWorldCanvas(rootSc, cel.nestId, cel.nestOriginFrame ?? 0, cel.nestOriginFrame ?? 0);
+      center = computeCanvasInkCenter(c);
+    } else if (cel.hasInk) {
+      center = computeCanvasInkCenter(cel.canvas);
+    }
+    const ax = center ? center.ax : WORLD_W * 0.5;
+    const ay = center ? center.ay : WORLD_H * 0.5;
+    celAnchorCache.set(cel, {
+      w: cel.canvas.width,
+      h: cel.canvas.height,
+      hasInk: cel.hasInk,
+      nestId: cel.nestId,
+      undoLen: cel.undoStack.length,
+      ax,
+      ay,
+    });
+    return { ax, ay };
+  }
+
+  function getVectorCelVisualAnchor(rootSc: Scene, vCel: VectorCel): { ax: number; ay: number } {
+    const cached = vectorAnchorCache.get(vCel);
+    if (
+      cached &&
+      cached.itemLen === vCel.items.length &&
+      cached.hasInk === vCel.hasInk &&
+      cached.nestId === vCel.nestId &&
+      cached.undoLen === vCel.undoStack.length
+    ) {
+      return { ax: cached.ax, ay: cached.ay };
+    }
+    const center = computeVectorCelCenter(rootSc, vCel);
+    vectorAnchorCache.set(vCel, {
+      itemLen: vCel.items.length,
+      hasInk: vCel.hasInk,
+      nestId: vCel.nestId,
+      undoLen: vCel.undoStack.length,
+      ax: center.ax,
+      ay: center.ay,
+    });
+    return center;
+  }
+
+  function hitTestLayerMotionPath(
+    rootSc: Scene,
+    layerKey: string,
+    entry: { start: number; cel: Cel | VectorCel } | null,
+    worldPt: Point2D,
+    cam: CameraKey,
+    totalViewScale: number
+  ): MotionPathHit | null {
+    if (!entry) return null;
+    const keys = getActivePosKeys(entry.cel);
+    if (keys.length < 2) return null;
+    const pMat = getParentWorldMatrix(rootSc, activeTimelineTarget(), layerKey, state.currentFrame);
+    const localWorldPt = isIdentityMat(pMat) ? worldPt : applyMatPt(invMat(pMat), worldPt);
+    const fullKeys = entry.cel.posKeys || [];
+    const { ax, ay } = layerKey.startsWith('vector:')
+      ? getVectorCelVisualAnchor(rootSc, entry.cel as VectorCel)
+      : getCelVisualAnchor(rootSc, entry.cel as Cel);
+    const inv = 1 / (totalViewScale * (cam.scale / 100));
+    const keyHitR = 11 * inv;
+    const handleHitR = 10 * inv;
+    const curveHitR = 9 * inv;
+
+    const curRel = state.currentFrame - entry.start;
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = keys.length - 1; i >= 0; i--) {
+        const k = keys[i];
+        if ((pass === 0) !== (k.relFrame === curRel)) continue;
+        const kx = k.offsetX + ax;
+        const ky = k.offsetY + ay;
+        if (Math.hypot(localWorldPt.x - kx, localWorldPt.y - ky) <= keyHitR) {
+          const fullIdx = fullKeys.indexOf(k);
+          if (fullIdx >= 0) return { kind: 'key', keyIndex: fullIdx };
+        }
+      }
+    }
+
+    for (let i = 0; i < keys.length - 1; i++) {
+      const a = keys[i];
+      const b = keys[i + 1];
+      const mid = evalSegmentPoint(a, b, 0.5);
+      const hx = mid.x + ax;
+      const hy = mid.y + ay;
+      if (Math.hypot(localWorldPt.x - hx, localWorldPt.y - hy) <= handleHitR) {
+        const fullIdx = fullKeys.indexOf(a);
+        if (fullIdx >= 0) return { kind: 'curveHandle', segIndex: fullIdx, t: 0.5 };
+      }
+    }
+
+    let bestSegFullIdx = -1;
+    let bestT = 0.5;
+    let bestDist = curveHitR;
+    const steps = 20;
+    for (let i = 0; i < keys.length - 1; i++) {
+      const a = keys[i];
+      const b = keys[i + 1];
+      const fullIdx = fullKeys.indexOf(a);
+      if (fullIdx < 0) continue;
+      let prevPt = { x: a.offsetX + ax, y: a.offsetY + ay };
+      for (let s = 1; s <= steps; s++) {
+        const t1 = s / steps;
+        const ev = evalSegmentPoint(a, b, t1);
+        const curPt = { x: ev.x + ax, y: ev.y + ay };
+        const d = distPointToSeg(localWorldPt, prevPt, curPt);
+        if (d <= bestDist) {
+          const abx = curPt.x - prevPt.x;
+          const aby = curPt.y - prevPt.y;
+          const len2 = abx * abx + aby * aby;
+          const localU =
+            len2 > 1e-6 ? Math.max(0, Math.min(1, ((localWorldPt.x - prevPt.x) * abx + (localWorldPt.y - prevPt.y) * aby) / len2)) : 0.5;
+          const t0 = (s - 1) / steps;
+          bestDist = d;
+          bestSegFullIdx = fullIdx;
+          bestT = Math.max(0.18, Math.min(0.82, t0 + (t1 - t0) * localU));
+        }
+        prevPt = curPt;
+      }
+    }
+    if (bestSegFullIdx >= 0) {
+      return { kind: 'segment', segIndex: bestSegFullIdx, t: bestT };
+    }
+    return null;
   }
 
   function cloneVectorItems(items: VectorItem[]): VectorItem[] {
@@ -763,8 +1327,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     });
   }
 
-  function getVectorCelEntryInScene(sc: Scene | NestedClip, frame: number): { start: number; cel: VectorCel } | null {
-    for (const [start, cel] of sc.vectorCels.entries()) {
+  function getVectorCelEntryInMap(celsMap: Map<number, VectorCel>, frame: number): { start: number; cel: VectorCel } | null {
+    for (const [start, cel] of celsMap.entries()) {
       if (frame >= start && frame < start + cel.duration) {
         return { start, cel };
       }
@@ -772,62 +1336,85 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     return null;
   }
 
-  function getVectorCelEntryAt(frame: number): { start: number; cel: VectorCel } | null {
-    return getVectorCelEntryInScene(activeTimelineTarget(), frame);
+  function getVectorCelEntryInScene(sc: Scene | NestedClip, frame: number): { start: number; cel: VectorCel } | null {
+    return getVectorCelEntryInMap(getActiveVectorTrackInTarget(sc).cels, frame);
   }
 
-  function getSortedVectorCelStarts(): number[] {
-    return Array.from(state.vectorCels.keys()).sort((a, b) => a - b);
+  function getVectorCelEntryAt(frame: number, celsMap: Map<number, VectorCel> = state.vectorCels): { start: number; cel: VectorCel } | null {
+    return getVectorCelEntryInMap(celsMap, frame);
   }
 
-  function getPrevVectorCelBefore(frame: number): { start: number; cel: VectorCel } | null {
-    const starts = getSortedVectorCelStarts();
+  function getSortedVectorCelStarts(celsMap: Map<number, VectorCel> = state.vectorCels): number[] {
+    return Array.from(celsMap.keys()).sort((a, b) => a - b);
+  }
+
+  function getPrevVectorCelBefore(frame: number, celsMap: Map<number, VectorCel> = state.vectorCels): { start: number; cel: VectorCel } | null {
+    const starts = getSortedVectorCelStarts(celsMap);
     let best: { start: number; cel: VectorCel } | null = null;
     for (const s of starts) {
       if (s < frame) {
-        const cel = state.vectorCels.get(s);
+        const cel = celsMap.get(s);
         if (cel) best = { start: s, cel };
       }
     }
     return best;
   }
 
-  function getNextVectorCelAfter(frame: number): { start: number; cel: VectorCel } | null {
-    const starts = getSortedVectorCelStarts();
+  function getNextVectorCelAfter(frame: number, celsMap: Map<number, VectorCel> = state.vectorCels): { start: number; cel: VectorCel } | null {
+    const starts = getSortedVectorCelStarts(celsMap);
     for (const s of starts) {
       if (s > frame) {
-        const cel = state.vectorCels.get(s);
+        const cel = celsMap.get(s);
         if (cel) return { start: s, cel };
       }
     }
     return null;
   }
 
-  function ensureVectorCelAt(frame: number, clonePrev = false): { start: number; cel: VectorCel } {
-    const existing = getVectorCelEntryAt(frame);
+  function ensureVectorCelAt(frame: number, clonePrev = false, celsMap: Map<number, VectorCel> = state.vectorCels): { start: number; cel: VectorCel } {
+    const existing = getVectorCelEntryAt(frame, celsMap);
     if (existing) return existing;
 
     let items: VectorItem[] = [];
     let offsetX = 0;
     let offsetY = 0;
+    let originX: number | undefined;
+    let originY: number | undefined;
+    let rotation: number | undefined;
     let hasInk = false;
     let nestId: string | undefined;
     let nestOriginFrame: number | undefined;
 
     if (clonePrev) {
-      const prev = getPrevVectorCelBefore(frame);
+      const prev = getPrevVectorCelBefore(frame, celsMap);
       if (prev) {
+        const endOff = getCelOffsetAtFrame(prev.cel, prev.start, prev.start + prev.cel.duration - 1);
         items = cloneVectorItems(prev.cel.items);
-        offsetX = prev.cel.offsetX;
-        offsetY = prev.cel.offsetY;
+        offsetX = Math.round(endOff.offsetX);
+        offsetY = Math.round(endOff.offsetY);
+        originX = prev.cel.originX;
+        originY = prev.cel.originY;
+        rotation = prev.cel.rotation;
         hasInk = prev.cel.hasInk;
         nestId = prev.cel.nestId;
         nestOriginFrame = prev.cel.nestOriginFrame;
       }
     }
 
-    const cel: VectorCel = { items, undoStack: [], hasInk, duration: 1, offsetX, offsetY, nestId, nestOriginFrame };
-    state.vectorCels.set(frame, cel);
+    const cel: VectorCel = {
+      items,
+      undoStack: [],
+      hasInk,
+      duration: 1,
+      offsetX,
+      offsetY,
+      originX,
+      originY,
+      rotation,
+      nestId,
+      nestOriginFrame,
+    };
+    celsMap.set(frame, cel);
     return { start: frame, cel };
   }
 
@@ -838,12 +1425,23 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       hasInk: vCel.hasInk,
       offsetX: vCel.offsetX,
       offsetY: vCel.offsetY,
+      posKeys: clonePosKeys(vCel.posKeys),
+      rotation: vCel.rotation,
+      originX: vCel.originX,
+      originY: vCel.originY,
     });
     if (vCel.undoStack.length > 25) vCel.undoStack.shift();
   }
 
   function pushVectorMoveUndo(vCel: VectorCel, offsetX: number, offsetY: number): void {
-    vCel.undoStack.push({ type: 'move', offsetX, offsetY });
+    vCel.undoStack.push({
+      type: 'move',
+      offsetX,
+      offsetY,
+      rotation: vCel.rotation,
+      originX: vCel.originX,
+      originY: vCel.originY,
+    });
     if (vCel.undoStack.length > 25) vCel.undoStack.shift();
   }
 
@@ -862,16 +1460,23 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
     if (newW === cw && newH === ch && newOx === ox && newOy === oy) return;
 
+    const shiftCanvasX = ox - newOx;
+    const shiftCanvasY = oy - newOy;
     const nextCanvas = createCelCanvas(newW, newH);
     const nctx = nextCanvas.getContext('2d');
     if (nctx) {
       nctx.imageSmoothingEnabled = false;
-      nctx.drawImage(layerObj.canvas, ox - newOx, oy - newOy);
+      nctx.drawImage(layerObj.canvas, shiftCanvasX, shiftCanvasY);
     }
 
     layerObj.canvas = nextCanvas;
     layerObj.offsetX = newOx;
     layerObj.offsetY = newOy;
+    if (typeof layerObj.originX === 'number') layerObj.originX += shiftCanvasX;
+    if (typeof layerObj.originY === 'number') layerObj.originY += shiftCanvasY;
+    if ('posKeys' in layerObj && layerObj.posKeys) {
+      shiftPosKeys(layerObj.posKeys, -shiftCanvasX, -shiftCanvasY);
+    }
   }
 
   function pushPixelUndo(layerObj: Cel | BgLayer | Viseme, fixedDims = false): void {
@@ -893,8 +1498,593 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   function pushMoveUndo(layerObj: Cel | BgLayer, offsetX: number, offsetY: number): void {
-    layerObj.undoStack.push({ type: 'move', offsetX, offsetY });
+    layerObj.undoStack.push({
+      type: 'move',
+      offsetX,
+      offsetY,
+      rotation: layerObj.rotation,
+      originX: layerObj.originX,
+      originY: layerObj.originY,
+    });
     if (layerObj.undoStack.length > 25) layerObj.undoStack.shift();
+  }
+
+  function worldToLayerLocal(
+    worldPt: Point2D,
+    offsetX: number,
+    offsetY: number,
+    ox: number,
+    oy: number,
+    rotation = 0
+  ): Point2D {
+    const dx = worldPt.x - (offsetX + ox);
+    const dy = worldPt.y - (offsetY + oy);
+    if (!rotation) return { x: dx + ox, y: dy + oy };
+    const c = Math.cos(-rotation);
+    const s = Math.sin(-rotation);
+    return { x: dx * c - dy * s + ox, y: dx * s + dy * c + oy };
+  }
+
+  function computeVectorCelCenter(rootSc: Scene, vCel: VectorCel): { ax: number; ay: number } {
+    if (vCel.nestId) {
+      const c = rasterizeNestedClipToWorldCanvas(rootSc, vCel.nestId, vCel.nestOriginFrame ?? 0, vCel.nestOriginFrame ?? 0);
+      const center = computeCanvasInkCenter(c);
+      if (center) return center;
+    }
+    if (vCel.items.length > 0) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const item of vCel.items) {
+        if (item.kind === 'fill') {
+          if (item.isErase) continue;
+          for (const loop of item.contours) {
+            for (const p of loop) {
+              if (p.x < minX) minX = p.x;
+              if (p.y < minY) minY = p.y;
+              if (p.x > maxX) maxX = p.x;
+              if (p.y > maxY) maxY = p.y;
+            }
+          }
+        } else if (item.kind === 'stroke') {
+          for (const p of item.points) {
+            if (p.x < minX) minX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y > maxY) maxY = p.y;
+          }
+        }
+      }
+      if (maxX >= minX && maxY >= minY) {
+        return { ax: (minX + maxX) * 0.5, ay: (minY + maxY) * 0.5 };
+      }
+    }
+    return { ax: WORLD_W * 0.5, ay: WORLD_H * 0.5 };
+  }
+
+  function getLayerPivotLocal(
+    rootSc: Scene,
+    layer: 'cel' | 'vector' | 'bg',
+    obj: Cel | VectorCel | BgLayer
+  ): { ox: number; oy: number } {
+    if (typeof obj.originX === 'number' && typeof obj.originY === 'number') {
+      return { ox: obj.originX, oy: obj.originY };
+    }
+    if (layer === 'cel') {
+      const a = getCelVisualAnchor(rootSc, obj as Cel);
+      return { ox: a.ax, oy: a.ay };
+    }
+    if (layer === 'vector') {
+      const a = computeVectorCelCenter(rootSc, obj as VectorCel);
+      return { ox: a.ax, oy: a.ay };
+    }
+    const bg = obj as BgLayer;
+    if (bg.hasInk) {
+      const c = computeCanvasInkCenter(bg.canvas);
+      if (c) return { ox: c.ax, oy: c.ay };
+    }
+    return { ox: WORLD_W * 0.5, oy: WORLD_H * 0.5 };
+  }
+
+  function applyLayerOriginChange(
+    layer: 'cel' | 'vector' | 'bg',
+    obj: Cel | VectorCel | BgLayer,
+    oldOx: number,
+    oldOy: number,
+    newOx: number,
+    newOy: number
+  ): void {
+    const rot = obj.rotation || 0;
+    const dx = newOx - oldOx;
+    const dy = newOy - oldOy;
+    if (rot !== 0) {
+      const c = Math.cos(rot);
+      const s = Math.sin(rot);
+      const rotDx = dx * c - dy * s;
+      const rotDy = dx * s + dy * c;
+      const shiftX = -dx + rotDx;
+      const shiftY = -dy + rotDy;
+      obj.offsetX += shiftX;
+      obj.offsetY += shiftY;
+      if ((layer === 'cel' || layer === 'vector') && 'posKeys' in obj && obj.posKeys) {
+        for (const k of obj.posKeys) {
+          k.offsetX += shiftX;
+          k.offsetY += shiftY;
+        }
+      }
+    }
+    obj.originX = newOx;
+    obj.originY = newOy;
+  }
+
+  type Mat2D = [number, number, number, number, number, number];
+  const MAT_ID: Mat2D = [1, 0, 0, 1, 0, 0];
+
+  function isIdentityMat(m: Mat2D): boolean {
+    return (
+      Math.abs(m[0] - 1) < 1e-6 &&
+      Math.abs(m[1]) < 1e-6 &&
+      Math.abs(m[2]) < 1e-6 &&
+      Math.abs(m[3] - 1) < 1e-6 &&
+      Math.abs(m[4]) < 1e-6 &&
+      Math.abs(m[5]) < 1e-6
+    );
+  }
+
+  function mulMat(m1: Mat2D, m2: Mat2D): Mat2D {
+    return [
+      m1[0] * m2[0] + m1[2] * m2[1],
+      m1[1] * m2[0] + m1[3] * m2[1],
+      m1[0] * m2[2] + m1[2] * m2[3],
+      m1[1] * m2[2] + m1[3] * m2[3],
+      m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+      m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
+    ];
+  }
+
+  function invMat(m: Mat2D): Mat2D {
+    const det = m[0] * m[3] - m[1] * m[2];
+    if (Math.abs(det) < 1e-10) return [...MAT_ID] as Mat2D;
+    const invDet = 1 / det;
+    return [
+      m[3] * invDet,
+      -m[1] * invDet,
+      -m[2] * invDet,
+      m[0] * invDet,
+      (m[2] * m[5] - m[3] * m[4]) * invDet,
+      (m[1] * m[4] - m[0] * m[5]) * invDet,
+    ];
+  }
+
+  function applyMatPt(m: Mat2D, pt: Point2D): Point2D {
+    return {
+      x: m[0] * pt.x + m[2] * pt.y + m[4],
+      y: m[1] * pt.x + m[3] * pt.y + m[5],
+    };
+  }
+
+  function applyMatVec(m: Mat2D, dx: number, dy: number): Point2D {
+    return {
+      x: m[0] * dx + m[2] * dy,
+      y: m[1] * dx + m[3] * dy,
+    };
+  }
+
+  function makeLayerLocalTransform(offsetX: number, offsetY: number, ox: number, oy: number, rotation: number): Mat2D {
+    if (!rotation) {
+      return [1, 0, 0, 1, offsetX, offsetY];
+    }
+    const c = Math.cos(rotation);
+    const s = Math.sin(rotation);
+    return [c, s, -s, c, offsetX + ox - c * ox + s * oy, offsetY + oy - s * ox - c * oy];
+  }
+
+  function normalizeTargetHierarchy(target: Scene | NestedClip): void {
+    const isScene = 'mouthLayers' in target;
+    const mouthKeys = isScene ? target.mouthLayers.map((m) => `mouth:${m.id}`) : [];
+    const vecKeys = target.vectorTracks.map((t) => `vector:${t.id}`);
+    const celKeys = target.celTracks.map((t) => `cel:${t.id}`);
+    const bgKeys = isScene ? target.bgLayers.map((b) => `bg:${b.id}`) : [];
+    const validSet = new Set<string>([...mouthKeys, ...vecKeys, ...celKeys, ...bgKeys]);
+
+    const mapLegacyKey = (k: string): string => {
+      if (k === 'cel' && celKeys[0]) return celKeys[0];
+      if (k === 'bg' && isScene && bgKeys[0]) return bgKeys[0];
+      if (k === 'mouth' && isScene && mouthKeys[0]) return mouthKeys[0];
+      return k;
+    };
+
+    if (!Array.isArray(target.layerOrder)) target.layerOrder = [];
+    const seen = new Set<string>();
+    const nextOrder: string[] = [];
+    for (const rawK of target.layerOrder) {
+      const k = mapLegacyKey(rawK);
+      if (validSet.has(k) && !seen.has(k)) {
+        seen.add(k);
+        nextOrder.push(k);
+      }
+    }
+    if (isScene) {
+      for (const mk of mouthKeys) {
+        if (!seen.has(mk)) {
+          nextOrder.unshift(mk);
+          seen.add(mk);
+        }
+      }
+    }
+    for (const vk of vecKeys) {
+      if (!seen.has(vk)) {
+        const firstCelIdx = nextOrder.findIndex((k) => k.startsWith('cel:'));
+        if (firstCelIdx >= 0) nextOrder.splice(firstCelIdx, 0, vk);
+        else nextOrder.push(vk);
+        seen.add(vk);
+      }
+    }
+    for (const ck of celKeys) {
+      if (!seen.has(ck)) {
+        const firstBgIdx = nextOrder.findIndex((k) => k.startsWith('bg:'));
+        if (firstBgIdx >= 0) nextOrder.splice(firstBgIdx, 0, ck);
+        else nextOrder.push(ck);
+        seen.add(ck);
+      }
+    }
+    if (isScene) {
+      for (const bk of bgKeys) {
+        if (!seen.has(bk)) {
+          nextOrder.push(bk);
+          seen.add(bk);
+        }
+      }
+    }
+    target.layerOrder = nextOrder;
+
+    // Keep track arrays aligned with visual order
+    const vecMap = new Map(target.vectorTracks.map((t) => [t.id, t]));
+    const orderedVecs: VectorTrack[] = [];
+    for (const k of nextOrder) {
+      if (k.startsWith('vector:')) {
+        const trk = vecMap.get(k.slice(7));
+        if (trk) orderedVecs.push(trk);
+      }
+    }
+    if (orderedVecs.length === target.vectorTracks.length) target.vectorTracks = orderedVecs;
+
+    const celMap = new Map(target.celTracks.map((t) => [t.id, t]));
+    const orderedCels: CelTrack[] = [];
+    for (const k of nextOrder) {
+      if (k.startsWith('cel:')) {
+        const trk = celMap.get(k.slice(4));
+        if (trk) orderedCels.push(trk);
+      }
+    }
+    if (orderedCels.length === target.celTracks.length) target.celTracks = orderedCels;
+
+    if (isScene) {
+      const bgMap = new Map(target.bgLayers.map((b) => [b.id, b]));
+      const orderedBgs: BgLayer[] = [];
+      for (const k of nextOrder) {
+        if (k.startsWith('bg:')) {
+          const b = bgMap.get(k.slice(3));
+          if (b) orderedBgs.push(b);
+        }
+      }
+      if (orderedBgs.length === target.bgLayers.length) target.bgLayers = orderedBgs;
+
+      const mMap = new Map(target.mouthLayers.map((m) => [m.id, m]));
+      const orderedMs: MouthLayer[] = [];
+      for (const k of nextOrder) {
+        if (k.startsWith('mouth:')) {
+          const m = mMap.get(k.slice(6));
+          if (m) orderedMs.push(m);
+        }
+      }
+      if (orderedMs.length === target.mouthLayers.length) target.mouthLayers = orderedMs;
+    }
+
+    if (!target.layerParents) target.layerParents = {};
+    const nextParents: Record<string, string | null> = {};
+    for (const rawK of Object.keys(target.layerParents)) {
+      const k = mapLegacyKey(rawK);
+      const rawP = target.layerParents[rawK];
+      const p = rawP ? mapLegacyKey(rawP) : null;
+      if (validSet.has(k) && p && validSet.has(p) && p !== k) {
+        nextParents[k] = p;
+      }
+    }
+    target.layerParents = nextParents;
+
+    // Break any accidental cycles
+    for (const k of nextOrder) {
+      const visited = new Set<string>([k]);
+      let cur = target.layerParents[k] || null;
+      while (cur) {
+        if (visited.has(cur)) {
+          delete target.layerParents[k];
+          break;
+        }
+        visited.add(cur);
+        cur = target.layerParents[cur] || null;
+      }
+    }
+  }
+
+  function getLayerDepth(target: Scene | NestedClip, key: string): number {
+    let depth = 0;
+    const visited = new Set<string>([key]);
+    let cur = target.layerParents?.[key] || null;
+    while (cur && !visited.has(cur) && depth < 16) {
+      visited.add(cur);
+      depth++;
+      cur = target.layerParents?.[cur] || null;
+    }
+    return depth;
+  }
+
+  function isLayerDescendant(target: Scene | NestedClip, ancestorKey: string, candidateKey: string): boolean {
+    if (ancestorKey === candidateKey) return true;
+    const visited = new Set<string>([candidateKey]);
+    let cur = target.layerParents?.[candidateKey] || null;
+    while (cur && !visited.has(cur)) {
+      if (cur === ancestorKey) return true;
+      visited.add(cur);
+      cur = target.layerParents?.[cur] || null;
+    }
+    return false;
+  }
+
+  function getLayerDisplayName(target: Scene | NestedClip, key: string): string {
+    if (key.startsWith('vector:')) {
+      return target.vectorTracks.find((t) => t.id === key.slice(7))?.name || 'Vector';
+    }
+    if (key.startsWith('cel:') || key === 'cel') {
+      const id = key.startsWith('cel:') ? key.slice(4) : target.activeCelTrackId;
+      return target.celTracks.find((t) => t.id === id)?.name || 'Bitmap';
+    }
+    if ('bgLayers' in target && (key.startsWith('bg:') || key === 'bg')) {
+      const id = key.startsWith('bg:') ? key.slice(3) : target.activeBgLayerId;
+      return target.bgLayers.find((b) => b.id === id)?.trackName || 'Background';
+    }
+    if ('mouthLayers' in target && (key.startsWith('mouth:') || key === 'mouth')) {
+      const id = key.startsWith('mouth:') ? key.slice(6) : target.activeMouthLayerId;
+      return target.mouthLayers.find((m) => m.id === id)?.name || 'Mouth';
+    }
+    return key;
+  }
+
+  function setLayerDisplayName(target: Scene | NestedClip, key: string, newName: string): void {
+    const clean = newName.trim();
+    if (!clean) return;
+    if (key.startsWith('vector:')) {
+      const trk = target.vectorTracks.find((t) => t.id === key.slice(7));
+      if (trk) trk.name = clean;
+    } else if (key.startsWith('cel:') || key === 'cel') {
+      const id = key.startsWith('cel:') ? key.slice(4) : target.activeCelTrackId;
+      const trk = target.celTracks.find((t) => t.id === id);
+      if (trk) trk.name = clean;
+    } else if ('bgLayers' in target && (key.startsWith('bg:') || key === 'bg')) {
+      const id = key.startsWith('bg:') ? key.slice(3) : target.activeBgLayerId;
+      const bg = target.bgLayers.find((b) => b.id === id);
+      if (bg) bg.trackName = clean;
+    } else if ('mouthLayers' in target && (key.startsWith('mouth:') || key === 'mouth')) {
+      const id = key.startsWith('mouth:') ? key.slice(6) : target.activeMouthLayerId;
+      const ml = target.mouthLayers.find((m) => m.id === id);
+      if (ml) ml.name = clean;
+    }
+  }
+
+  function getLayerKeyForActive(target: Scene | NestedClip): string {
+    if (state.activeLayer === 'vector') return `vector:${getActiveVectorTrackInTarget(target).id}`;
+    if (state.activeLayer === 'cel') return `cel:${getActiveCelTrackInTarget(target).id}`;
+    if ('bgLayers' in target && state.activeLayer === 'bg') return `bg:${getActiveBgLayerInScene(target).id}`;
+    if ('mouthLayers' in target && state.activeLayer === 'mouth') return `mouth:${getActiveMouthLayerInScene(target).id}`;
+    return `cel:${getActiveCelTrackInTarget(target).id}`;
+  }
+
+  function getLayerOwnTransformMatrix(
+    rootSc: Scene,
+    target: Scene | NestedClip,
+    layerKey: string,
+    frame: number
+  ): Mat2D {
+    if (layerKey.startsWith('cel:')) {
+      const trk = target.celTracks.find((t) => t.id === layerKey.slice(4));
+      if (!trk) return MAT_ID;
+      const entry = getCelEntryInMap(trk.cels, frame);
+      if (!entry) return MAT_ID;
+      const off = getCelOffsetAtFrame(entry.cel, entry.start, frame);
+      const rot = entry.cel.rotation || 0;
+      const piv = rot ? getLayerPivotLocal(rootSc, 'cel', entry.cel) : { ox: 0, oy: 0 };
+      return makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, rot);
+    }
+    if (layerKey.startsWith('vector:')) {
+      const trk = target.vectorTracks.find((t) => t.id === layerKey.slice(7));
+      if (!trk) return MAT_ID;
+      const vEntry = getVectorCelEntryInMap(trk.cels, frame);
+      if (!vEntry) return MAT_ID;
+      const off = getCelOffsetAtFrame(vEntry.cel, vEntry.start, frame);
+      const rot = vEntry.cel.rotation || 0;
+      const piv = rot ? getLayerPivotLocal(rootSc, 'vector', vEntry.cel) : { ox: 0, oy: 0 };
+      return makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, rot);
+    }
+    if (layerKey.startsWith('bg:') && 'bgLayers' in target) {
+      const bg = target.bgLayers.find((b) => b.id === layerKey.slice(3));
+      if (!bg) return MAT_ID;
+      const rot = bg.rotation || 0;
+      const piv = rot ? getLayerPivotLocal(rootSc, 'bg', bg) : { ox: 0, oy: 0 };
+      return makeLayerLocalTransform(bg.offsetX, bg.offsetY, piv.ox, piv.oy, rot);
+    }
+    if (layerKey.startsWith('mouth:') && 'mouthLayers' in target) {
+      const ml = target.mouthLayers.find((m) => m.id === layerKey.slice(6));
+      if (!ml) return MAT_ID;
+      const m = getEvaluatedMouthInScene(rootSc, frame, ml);
+      if (!m) return MAT_ID;
+      const restX = Math.round(WORLD_W / 2);
+      const restY = Math.round(WORLD_H * 0.56);
+      const odx = m.originDx || 0;
+      const ody = m.originDy || 0;
+      return makeLayerLocalTransform(m.x - restX, m.y - restY, restX + odx, restY + ody, m.rotation || 0);
+    }
+    return MAT_ID;
+  }
+
+  function getParentWorldMatrix(
+    rootSc: Scene,
+    target: Scene | NestedClip,
+    layerKey: string,
+    frame: number
+  ): Mat2D {
+    const chain: string[] = [];
+    const visited = new Set<string>([layerKey]);
+    let cur = target.layerParents?.[layerKey] || null;
+    while (cur && !visited.has(cur) && chain.length < 16) {
+      visited.add(cur);
+      chain.push(cur);
+      cur = target.layerParents?.[cur] || null;
+    }
+    if (chain.length === 0) return MAT_ID;
+    let mat: Mat2D = MAT_ID;
+    for (let i = chain.length - 1; i >= 0; i--) {
+      const lm = getLayerOwnTransformMatrix(rootSc, target, chain[i], frame);
+      if (!isIdentityMat(lm)) mat = mulMat(mat, lm);
+    }
+    return mat;
+  }
+
+  function setLayerParentKeepWorld(
+    rootSc: Scene,
+    target: Scene | NestedClip,
+    childKey: string,
+    newParentKey: string | null,
+    frame: number
+  ): boolean {
+    normalizeTargetHierarchy(target);
+    if (newParentKey && isLayerDescendant(target, childKey, newParentKey)) return false;
+    const oldParentKey = target.layerParents[childKey] || null;
+    if (oldParentKey === newParentKey) return true;
+
+    const oldParentMat = getParentWorldMatrix(rootSc, target, childKey, frame);
+    if (newParentKey) target.layerParents[childKey] = newParentKey;
+    else delete target.layerParents[childKey];
+    const newParentMat = getParentWorldMatrix(rootSc, target, childKey, frame);
+    const deltaMat = mulMat(invMat(newParentMat), oldParentMat);
+
+    if (!isIdentityMat(deltaMat)) {
+      if (childKey.startsWith('cel:')) {
+        const cTrk = target.celTracks.find((t) => t.id === childKey.slice(4));
+        const entry = cTrk ? getCelEntryInMap(cTrk.cels, frame) : null;
+        if (entry) {
+          const cel = entry.cel;
+          const piv = getLayerPivotLocal(rootSc, 'cel', cel);
+          const off = getCelOffsetAtFrame(cel, entry.start, frame);
+          const mOld = makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, cel.rotation || 0);
+          const mNew = mulMat(deltaMat, mOld);
+          const pPiv = applyMatPt(mNew, { x: piv.ox, y: piv.oy });
+          const nextOffX = Math.round((pPiv.x - piv.ox) * 10) / 10;
+          const nextOffY = Math.round((pPiv.y - piv.oy) * 10) / 10;
+          cel.rotation = Math.atan2(mNew[1], mNew[0]);
+          if (cel.posKeys && cel.posKeys.length > 0) {
+            const dx = nextOffX - off.offsetX;
+            const dy = nextOffY - off.offsetY;
+            for (const k of cel.posKeys) {
+              k.offsetX += dx;
+              k.offsetY += dy;
+            }
+            cel.offsetX += dx;
+            cel.offsetY += dy;
+          } else {
+            cel.offsetX = nextOffX;
+            cel.offsetY = nextOffY;
+          }
+        }
+      } else if (childKey.startsWith('vector:')) {
+        const trk = target.vectorTracks.find((t) => t.id === childKey.slice(7));
+        const vEntry = trk ? getVectorCelEntryInMap(trk.cels, frame) : null;
+        if (vEntry) {
+          const vCel = vEntry.cel;
+          const piv = getLayerPivotLocal(rootSc, 'vector', vCel);
+          const off = getCelOffsetAtFrame(vCel, vEntry.start, frame);
+          const mOld = makeLayerLocalTransform(off.offsetX, off.offsetY, piv.ox, piv.oy, vCel.rotation || 0);
+          const mNew = mulMat(deltaMat, mOld);
+          const pPiv = applyMatPt(mNew, { x: piv.ox, y: piv.oy });
+          const nextOffX = Math.round((pPiv.x - piv.ox) * 10) / 10;
+          const nextOffY = Math.round((pPiv.y - piv.oy) * 10) / 10;
+          vCel.rotation = Math.atan2(mNew[1], mNew[0]);
+          if (vCel.posKeys && vCel.posKeys.length > 0) {
+            const dx = nextOffX - off.offsetX;
+            const dy = nextOffY - off.offsetY;
+            for (const k of vCel.posKeys) {
+              k.offsetX += dx;
+              k.offsetY += dy;
+            }
+            vCel.offsetX += dx;
+            vCel.offsetY += dy;
+          } else {
+            vCel.offsetX = nextOffX;
+            vCel.offsetY = nextOffY;
+          }
+        }
+      } else if (childKey.startsWith('bg:') && 'bgLayers' in target) {
+        const bg = target.bgLayers.find((b) => b.id === childKey.slice(3));
+        if (bg) {
+          const piv = getLayerPivotLocal(rootSc, 'bg', bg);
+          const mOld = makeLayerLocalTransform(bg.offsetX, bg.offsetY, piv.ox, piv.oy, bg.rotation || 0);
+          const mNew = mulMat(deltaMat, mOld);
+          const pPiv = applyMatPt(mNew, { x: piv.ox, y: piv.oy });
+          bg.offsetX = Math.round((pPiv.x - piv.ox) * 10) / 10;
+          bg.offsetY = Math.round((pPiv.y - piv.oy) * 10) / 10;
+          bg.rotation = Math.atan2(mNew[1], mNew[0]);
+        }
+      } else if (childKey.startsWith('mouth:') && 'mouthLayers' in target) {
+        const ml = target.mouthLayers.find((m) => m.id === childKey.slice(6));
+        const m = ml ? getEvaluatedMouthInScene(rootSc, frame, ml) : null;
+        if (ml && m) {
+          const odx = m.originDx || 0;
+          const ody = m.originDy || 0;
+          const pivPt = applyMatPt(deltaMat, { x: m.x + odx, y: m.y + ody });
+          const nextRot = (m.rotation || 0) + Math.atan2(deltaMat[1], deltaMat[0]);
+          ml.keys.set(frame, {
+            viseme: m.viseme,
+            x: Math.round(pivPt.x - odx),
+            y: Math.round(pivPt.y - ody),
+            scale: m.scale,
+            originDx: m.originDx,
+            originDy: m.originDy,
+            rotation: nextRot,
+          });
+        }
+      }
+    }
+
+    if (newParentKey) {
+      // Position child block immediately below newParentKey (after existing descendants of newParentKey)
+      const block = getContiguousLayerSubtree(target, childKey);
+      const remaining = target.layerOrder.filter((k) => !block.includes(k));
+      const pIdx = remaining.indexOf(newParentKey);
+      if (pIdx >= 0) {
+        let insertAt = pIdx + 1;
+        while (insertAt < remaining.length && isLayerDescendant(target, newParentKey, remaining[insertAt])) {
+          insertAt++;
+        }
+        remaining.splice(insertAt, 0, ...block);
+        target.layerOrder = remaining;
+      }
+    }
+    normalizeTargetHierarchy(target);
+    return true;
+  }
+
+  function getContiguousLayerSubtree(target: Scene | NestedClip, rootKey: string): string[] {
+    normalizeTargetHierarchy(target);
+    const startIdx = target.layerOrder.indexOf(rootKey);
+    if (startIdx < 0) return [rootKey];
+    const block = [rootKey];
+    for (let i = startIdx + 1; i < target.layerOrder.length; i++) {
+      const k = target.layerOrder[i];
+      if (isLayerDescendant(target, rootKey, k)) block.push(k);
+      else break;
+    }
+    return block;
   }
 
   const brushMaskCache = new Map<number, BrushMask>();
@@ -1326,7 +2516,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     vctx.stroke();
   }
 
-  function drawVectorItemsToContext(vctx: CanvasRenderingContext2D, items: VectorItem[]): void {
+  function drawVectorItemsToContext(vctx: CanvasRenderingContext2D, items: VectorItem[], pixelBias = false): void {
     vctx.save();
     vctx.imageSmoothingEnabled = true;
     vctx.lineCap = 'round';
@@ -1349,7 +2539,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         vctx.fill('evenodd');
         if (!item.isErase) {
           vctx.strokeStyle = item.color;
-          vctx.lineWidth = 0.75;
+          vctx.lineWidth = pixelBias ? 1 : 0.75;
           vctx.stroke();
         }
       } else if (item.kind === 'erase') {
@@ -1362,8 +2552,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         vctx.globalCompositeOperation = 'source-over';
         vctx.strokeStyle = item.color;
         vctx.fillStyle = item.color;
-        vctx.lineWidth = item.size;
-        drawVectorStrokePath(vctx, item.points, item.size);
+        const effectiveSize = pixelBias ? Math.max(1.25, item.size) : item.size;
+        vctx.lineWidth = effectiveSize;
+        drawVectorStrokePath(vctx, item.points, effectiveSize);
       }
     }
     vctx.restore();
@@ -1535,9 +2726,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     worldX: number,
     worldY: number,
     hexColor: string,
-    isErase = false
+    isErase = false,
+    overrideOffsetX?: number,
+    overrideOffsetY?: number
   ): boolean {
-    const localPt = { x: worldX - vCel.offsetX, y: worldY - vCel.offsetY };
+    const ox = typeof overrideOffsetX === 'number' ? overrideOffsetX : vCel.offsetX;
+    const oy = typeof overrideOffsetY === 'number' ? overrideOffsetY : vCel.offsetY;
+    const piv = vCel.rotation ? getLayerPivotLocal(activeScene(), 'vector', vCel) : { ox: 0, oy: 0 };
+    const localPt = worldToLayerLocal({ x: worldX, y: worldY }, ox, oy, piv.ox, piv.oy, vCel.rotation || 0);
 
     if (isErase) {
       for (let i = vCel.items.length - 1; i >= 0; i--) {
@@ -1671,11 +2867,23 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     return false;
   }
 
-  function floodFillVectorCel(vCel: VectorCel, worldX: number, worldY: number, hexColor: string, isErase = false): boolean {
+  function floodFillVectorCel(
+    vCel: VectorCel,
+    worldX: number,
+    worldY: number,
+    hexColor: string,
+    isErase = false,
+    overrideOffsetX?: number,
+    overrideOffsetY?: number
+  ): boolean {
     const w = WORLD_W;
     const h = WORLD_H;
-    const sx = Math.round(worldX);
-    const sy = Math.round(worldY);
+    const ox = typeof overrideOffsetX === 'number' ? overrideOffsetX : vCel.offsetX;
+    const oy = typeof overrideOffsetY === 'number' ? overrideOffsetY : vCel.offsetY;
+    const piv = vCel.rotation ? getLayerPivotLocal(activeScene(), 'vector', vCel) : { ox: 0, oy: 0 };
+    const localSeed = worldToLayerLocal({ x: worldX, y: worldY }, ox, oy, piv.ox, piv.oy, vCel.rotation || 0);
+    const sx = Math.round(localSeed.x + ox);
+    const sy = Math.round(localSeed.y + oy);
     if (sx < 0 || sx >= w || sy < 0 || sy >= h) return false;
 
     if (vectorFillBufferCanvas.width !== w || vectorFillBufferCanvas.height !== h) {
@@ -1684,7 +2892,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     }
     vectorFillBufferCtx.clearRect(0, 0, w, h);
     vectorFillBufferCtx.save();
-    vectorFillBufferCtx.translate(vCel.offsetX, vCel.offsetY);
+    vectorFillBufferCtx.translate(ox, oy);
     drawVectorItemsToContext(vectorFillBufferCtx, vCel.items);
     vectorFillBufferCtx.restore();
 
@@ -1770,7 +2978,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     }
 
     if (filledCount === 0) return false;
-    const contours = traceMaskContours(visited, w, h, -vCel.offsetX, -vCel.offsetY);
+    const contours = traceMaskContours(visited, w, h, -ox, -oy);
     if (contours.length === 0) return false;
 
     pushVectorItemsUndo(vCel);
@@ -1807,9 +3015,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   // ==========================================
   // MOUTH SHAPES / VISEMES LAYER
   // ==========================================
-  function ensureMouthInitInScene(sc: Scene): void {
-    if (sc.mouthLayer.keys.size === 0) {
-      sc.mouthLayer.keys.set(0, {
+  function ensureMouthInitInScene(sc: Scene, ml: MouthLayer = getActiveMouthLayerInScene(sc)): void {
+    if (ml.keys.size === 0) {
+      ml.keys.set(0, {
         viseme: 0,
         x: Math.round(WORLD_W / 2),
         y: Math.round(WORLD_H * 0.56),
@@ -1818,25 +3026,29 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     }
   }
 
-  function getEvaluatedMouthInScene(sc: Scene, frame: number): (MouthKey & { keyFrame: number; isKey: boolean }) | null {
-    if (!sc.mouthLayer.visible || sc.mouthLayer.keys.size === 0) return null;
-    const exact = sc.mouthLayer.keys.get(frame);
+  function getEvaluatedMouthInScene(
+    sc: Scene,
+    frame: number,
+    ml: MouthLayer = getActiveMouthLayerInScene(sc)
+  ): (MouthKey & { keyFrame: number; isKey: boolean }) | null {
+    if (!ml.visible || ml.keys.size === 0) return null;
+    const exact = ml.keys.get(frame);
     if (exact) {
       return { keyFrame: frame, ...exact, isKey: true };
     }
     let bestF: number | null = null;
     let firstF: number | null = null;
-    for (const f of sc.mouthLayer.keys.keys()) {
+    for (const f of ml.keys.keys()) {
       if (firstF === null || f < firstF) firstF = f;
       if (f <= frame && (bestF === null || f > bestF)) bestF = f;
     }
     const useF = bestF !== null ? bestF : firstF!;
-    const mk = sc.mouthLayer.keys.get(useF)!;
+    const mk = ml.keys.get(useF)!;
     return { keyFrame: useF, ...mk, isKey: false };
   }
 
-  function getActiveMouthState(): MouthKey & { keyFrame: number } {
-    const evalM = getEvaluatedMouthInScene(activeScene(), state.currentFrame);
+  function getActiveMouthState(ml: MouthLayer = state.mouthLayer): MouthKey & { keyFrame: number } {
+    const evalM = getEvaluatedMouthInScene(activeScene(), state.currentFrame, ml);
     if (evalM) return evalM;
     return {
       keyFrame: state.currentFrame,
@@ -1847,19 +3059,76 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     };
   }
 
-  function setMouthKeyAtCurrentFrame(patch: Partial<MouthKey>, targetFrame = state.currentFrame): void {
-    const cur = getActiveMouthState();
-    state.mouthLayer.keys.set(targetFrame, {
+  type MouthUndoAction =
+    | { kind: 'viseme'; visemeIdx: number }
+    | { kind: 'transform'; frame: number; prevKey?: MouthKey };
+  const mouthUndoStacks = new WeakMap<MouthLayer, MouthUndoAction[]>();
+
+  function pushMouthTransformUndo(frame = state.currentFrame, ml: MouthLayer = state.mouthLayer): void {
+    let st = mouthUndoStacks.get(ml);
+    if (!st) {
+      st = [];
+      mouthUndoStacks.set(ml, st);
+    }
+    const existing = ml.keys.get(frame);
+    st.push({
+      kind: 'transform',
+      frame,
+      prevKey: existing ? { ...existing } : undefined,
+    });
+    if (st.length > 25) st.shift();
+  }
+
+  function pushMouthVisemeUndo(visemeIdx: number, ml: MouthLayer = state.mouthLayer): void {
+    let st = mouthUndoStacks.get(ml);
+    if (!st) {
+      st = [];
+      mouthUndoStacks.set(ml, st);
+    }
+    st.push({ kind: 'viseme', visemeIdx });
+    if (st.length > 25) st.shift();
+  }
+
+  function setMouthKeyAtCurrentFrame(
+    patch: Partial<MouthKey>,
+    targetFrame = state.currentFrame,
+    ml: MouthLayer = state.mouthLayer
+  ): void {
+    const cur = getActiveMouthState(ml);
+    ml.keys.set(targetFrame, {
       viseme: patch.viseme !== undefined ? patch.viseme : cur.viseme,
       x: patch.x !== undefined ? patch.x : cur.x,
       y: patch.y !== undefined ? patch.y : cur.y,
       scale: patch.scale !== undefined ? patch.scale : cur.scale,
+      originDx: patch.originDx !== undefined ? patch.originDx : cur.originDx,
+      originDy: patch.originDy !== undefined ? patch.originDy : cur.originDy,
+      rotation: patch.rotation !== undefined ? patch.rotation : cur.rotation,
     });
   }
 
-  function deleteMouthKeyAtFrame(frame: number): boolean {
-    if (!state.mouthLayer.keys.has(frame)) return false;
-    state.mouthLayer.keys.delete(frame);
+  function applyMouthOriginChange(
+    mk: Partial<MouthKey> & { x: number; y: number; originDx?: number; originDy?: number; rotation?: number },
+    newOdx: number,
+    newOdy: number
+  ): void {
+    const oldOdx = mk.originDx || 0;
+    const oldOdy = mk.originDy || 0;
+    const rot = mk.rotation || 0;
+    const dx = newOdx - oldOdx;
+    const dy = newOdy - oldOdy;
+    if (rot !== 0) {
+      const c = Math.cos(rot);
+      const s = Math.sin(rot);
+      mk.x += -dx + (dx * c - dy * s);
+      mk.y += -dy + (dx * s + dy * c);
+    }
+    mk.originDx = newOdx;
+    mk.originDy = newOdy;
+  }
+
+  function deleteMouthKeyAtFrame(frame: number, ml: MouthLayer = state.mouthLayer): boolean {
+    if (!ml.keys.has(frame)) return false;
+    ml.keys.delete(frame);
     updateMouthWidget();
     renderTimeline();
     renderStage();
@@ -1870,13 +3139,12 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     state.showMouthTrack = typeof forceState === 'boolean' ? forceState : !state.showMouthTrack;
     const btn = mustEl<HTMLButtonElement>('btnToggleMouthTrack');
     btn.classList.toggle('active', state.showMouthTrack);
-    mouthTrackLabel.classList.toggle('hidden-track', !state.showMouthTrack);
-    mouthTrackRow.classList.toggle('hidden-track', !state.showMouthTrack);
-    mouthTrackRight.classList.toggle('hidden-track', !state.showMouthTrack);
+    btnAddMouthTrack.classList.toggle('hidden-nest-ui', !state.showMouthTrack || nestStack.length > 0);
+    syncLayerTrackContainers();
 
     if (state.showMouthTrack) {
       state.mouthLayer.visible = true;
-      ensureMouthInitInScene(activeScene());
+      ensureMouthInitInScene(activeScene(), state.mouthLayer);
       if (typeof forceState !== 'boolean') {
         selectTimelineTrack('mouth');
       }
@@ -1887,6 +3155,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     updateTimelinePanelHeight();
     renderTimeline();
     renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
   }
 
   mustEl<HTMLButtonElement>('btnToggleMouthTrack').onclick = () => {
@@ -1894,15 +3166,17 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   };
 
   function updateMouthWidget(): void {
-    const showWidget = state.showMouthTrack && state.mouthLayer.visible;
+    const ml = state.mouthLayer;
+    const showWidget = state.showMouthTrack && ml.visible;
     mouthWidget.classList.toggle('open', showWidget);
-    mustEl<HTMLButtonElement>('btnVisMouth').style.opacity = state.mouthLayer.visible ? '1' : '0.35';
+    mouthLayerNameBadge.textContent = ml.name;
     btnMouthDraw.classList.toggle('active', state.activeLayer === 'mouth' && state.tool !== 'moveCam');
     btnMouthMove.classList.toggle('active', state.activeLayer === 'mouth' && state.tool === 'moveCam');
+    syncLayerTrackContainers();
 
     if (!showWidget) return;
-    const cur = getActiveMouthState();
-    const vis = state.mouthLayer.visemes[cur.viseme] || state.mouthLayer.visemes[0];
+    const cur = getActiveMouthState(ml);
+    const vis = ml.visemes[cur.viseme] || ml.visemes[0];
     mouthFrameLabel.textContent = vis.name;
     const scalePct = Math.round(cur.scale || 100);
     mouthScaleSlider.value = String(scalePct);
@@ -1930,8 +3204,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   function renderMouthSheet(): void {
     mouthSheetGrid.innerHTML = '';
-    const cur = getActiveMouthState();
-    state.mouthLayer.visemes.forEach((vis, idx) => {
+    const ml = state.mouthLayer;
+    const cur = getActiveMouthState(ml);
+    ml.visemes.forEach((vis, idx) => {
       const slot = document.createElement('button');
       slot.className = 'mouth-slot' + (idx === cur.viseme ? ' active' : '');
       const c = document.createElement('canvas');
@@ -1949,7 +3224,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       slot.appendChild(lbl);
 
       slot.onclick = () => {
-        setMouthKeyAtCurrentFrame({ viseme: idx });
+        setMouthKeyAtCurrentFrame({ viseme: idx }, state.currentFrame, ml);
         updateMouthWidget();
         renderTimeline();
         renderStage();
@@ -1959,11 +3234,12 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   function cycleMouthViseme(dir: number): void {
-    if (!state.mouthLayer.visible) state.mouthLayer.visible = true;
-    const cur = getActiveMouthState();
-    const len = state.mouthLayer.visemes.length;
+    const ml = state.mouthLayer;
+    if (!ml.visible) ml.visible = true;
+    const cur = getActiveMouthState(ml);
+    const len = ml.visemes.length;
     const nextIdx = (cur.viseme + dir + len) % len;
-    setMouthKeyAtCurrentFrame({ viseme: nextIdx });
+    setMouthKeyAtCurrentFrame({ viseme: nextIdx }, state.currentFrame, ml);
     updateMouthWidget();
     renderTimeline();
     renderStage();
@@ -1997,75 +3273,50 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   };
 
   mustEl<HTMLButtonElement>('btnMouthClearShape').onclick = () => {
-    const cur = getActiveMouthState();
-    const vis = state.mouthLayer.visemes[cur.viseme];
+    const ml = state.mouthLayer;
+    const cur = getActiveMouthState(ml);
+    const vis = ml.visemes[cur.viseme];
     pushPixelUndo(vis, true);
+    pushMouthVisemeUndo(cur.viseme, ml);
     vis.canvas.getContext('2d')?.clearRect(0, 0, MOUTH_W, MOUTH_H);
     updateMouthWidget();
     renderStage();
   };
 
   mustEl<HTMLButtonElement>('btnMouthResetShape').onclick = () => {
-    const cur = getActiveMouthState();
-    const vis = state.mouthLayer.visemes[cur.viseme];
+    const ml = state.mouthLayer;
+    const cur = getActiveMouthState(ml);
+    const vis = ml.visemes[cur.viseme];
     pushPixelUndo(vis, true);
+    pushMouthVisemeUndo(cur.viseme, ml);
     drawStarterViseme(vis.canvas, cur.viseme);
     updateMouthWidget();
     renderStage();
   };
 
-  mustEl<HTMLButtonElement>('btnVisMouth').onclick = (e) => {
-    e.stopPropagation();
-    state.mouthLayer.visible = !state.mouthLayer.visible;
-    if (state.mouthLayer.visible) ensureMouthInitInScene(activeScene());
-    updateMouthWidget();
-    renderStage();
-  };
-
-  mouthTrackLabel.onclick = (e) => {
-    if ((e.target as HTMLElement)?.closest('button, input, select')) return;
-    setActiveLayer('mouth');
-  };
-  mouthTrackRow.addEventListener('pointerdown', (e) => {
-    if (state.isPlaying) togglePlay();
-    setActiveLayer('mouth');
-    goToFrame(frameFromClientX(e.clientX));
-  });
-
   let contextMouthFrame = 0;
-  mouthTrackRow.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    if (state.isPlaying) togglePlay();
-    setActiveLayer('mouth');
-    contextMouthFrame = frameFromClientX(e.clientX);
-    goToFrame(contextMouthFrame);
-
-    mustEl<HTMLButtonElement>('ctxMouthDelete').disabled = !state.mouthLayer.keys.has(contextMouthFrame);
-    mustEl<HTMLButtonElement>('ctxMouthClearAll').disabled = state.mouthLayer.keys.size === 0;
-
-    mouthContextMenu.style.display = 'flex';
-    const menuW = 175;
-    const menuH = 105;
-    const left = Math.min(window.innerWidth - menuW - 6, e.clientX);
-    const top = Math.min(window.innerHeight - menuH - 6, e.clientY);
-    mouthContextMenu.style.left = `${left}px`;
-    mouthContextMenu.style.top = `${top}px`;
-  });
+  let contextMouthLayerId: string | null = null;
 
   mustEl<HTMLButtonElement>('ctxMouthDelete').onclick = () => {
-    deleteMouthKeyAtFrame(contextMouthFrame);
+    const ml =
+      (contextMouthLayerId && activeScene().mouthLayers.find((m) => m.id === contextMouthLayerId)) || state.mouthLayer;
+    deleteMouthKeyAtFrame(contextMouthFrame, ml);
     hideMenus();
   };
   mustEl<HTMLButtonElement>('ctxMouthKey').onclick = () => {
-    if (!state.mouthLayer.visible) state.mouthLayer.visible = true;
-    setMouthKeyAtCurrentFrame({}, contextMouthFrame);
+    const ml =
+      (contextMouthLayerId && activeScene().mouthLayers.find((m) => m.id === contextMouthLayerId)) || state.mouthLayer;
+    if (!ml.visible) ml.visible = true;
+    setMouthKeyAtCurrentFrame({}, contextMouthFrame, ml);
     updateMouthWidget();
     renderTimeline();
     renderStage();
     hideMenus();
   };
   mustEl<HTMLButtonElement>('ctxMouthClearAll').onclick = () => {
-    state.mouthLayer.keys.clear();
+    const ml =
+      (contextMouthLayerId && activeScene().mouthLayers.find((m) => m.id === contextMouthLayerId)) || state.mouthLayer;
+    ml.keys.clear();
     updateMouthWidget();
     renderTimeline();
     renderStage();
@@ -2121,6 +3372,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   const vectorScratchCanvas = createCelCanvas();
   const vectorScratchCtx = vectorScratchCanvas.getContext('2d')!;
+  const vectorPixelCanvas = createCelCanvas();
+  const vectorPixelCtx = vectorPixelCanvas.getContext('2d')!;
+  vectorPixelCtx.imageSmoothingEnabled = false;
 
   function getClipLoopFrame(clip: NestedClip, outerFrame: number, originFrame = 0): number {
     const len = Math.max(1, clip.totalFrames);
@@ -2132,18 +3386,22 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (depth > 12) return false;
     const clip = sc.nestedClips.get(clipId);
     if (!clip) return false;
-    for (const c of clip.cels.values()) {
-      if (c.nestId) {
-        if (doesClipHaveInk(sc, c.nestId, depth + 1)) return true;
-      } else if (c.hasInk) {
-        return true;
+    for (const cTrk of clip.celTracks) {
+      for (const c of cTrk.cels.values()) {
+        if (c.nestId) {
+          if (doesClipHaveInk(sc, c.nestId, depth + 1)) return true;
+        } else if (c.hasInk) {
+          return true;
+        }
       }
     }
-    for (const vc of clip.vectorCels.values()) {
-      if (vc.nestId) {
-        if (doesClipHaveInk(sc, vc.nestId, depth + 1)) return true;
-      } else if (vc.hasInk || vc.items.length > 0) {
-        return true;
+    for (const trk of clip.vectorTracks) {
+      for (const vc of trk.cels.values()) {
+        if (vc.nestId) {
+          if (doesClipHaveInk(sc, vc.nestId, depth + 1)) return true;
+        } else if (vc.hasInk || vc.items.length > 0) {
+          return true;
+        }
       }
     }
     return false;
@@ -2159,6 +3417,34 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     return vCel.hasInk || vCel.items.length > 0;
   }
 
+  function drawTransformedCanvas(
+    targetCtx: CanvasRenderingContext2D,
+    srcCanvas: HTMLCanvasElement,
+    offsetX: number,
+    offsetY: number,
+    ox = 0,
+    oy = 0,
+    rotation = 0,
+    dw?: number,
+    dh?: number
+  ): void {
+    targetCtx.save();
+    targetCtx.imageSmoothingEnabled = false;
+    if (rotation) {
+      targetCtx.translate(offsetX + ox, offsetY + oy);
+      targetCtx.rotate(rotation);
+      targetCtx.translate(-ox, -oy);
+    } else {
+      targetCtx.translate(offsetX, offsetY);
+    }
+    if (typeof dw === 'number' && typeof dh === 'number') {
+      targetCtx.drawImage(srcCanvas, 0, 0, dw, dh);
+    } else {
+      targetCtx.drawImage(srcCanvas, 0, 0);
+    }
+    targetCtx.restore();
+  }
+
   function renderVectorItemsWithOffset(
     targetCtx: CanvasRenderingContext2D,
     items: VectorItem[],
@@ -2171,9 +3457,55 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     vx: number,
     vy: number,
     alpha = 1,
-    tintColor?: string
+    tintColor?: string,
+    ox = 0,
+    oy = 0,
+    rotation = 0,
+    parentMat: Mat2D = MAT_ID
   ): void {
     if (items.length === 0) return;
+    if (state.vectorPixelPreview) {
+      if (vectorPixelCanvas.width !== WORLD_W || vectorPixelCanvas.height !== WORLD_H) {
+        vectorPixelCanvas.width = WORLD_W;
+        vectorPixelCanvas.height = WORLD_H;
+      }
+      vectorPixelCtx.setTransform(1, 0, 0, 1, 0, 0);
+      vectorPixelCtx.clearRect(0, 0, WORLD_W, WORLD_H);
+      vectorPixelCtx.save();
+      if (!isIdentityMat(parentMat)) {
+        vectorPixelCtx.transform(...parentMat);
+      }
+      if (rotation) {
+        vectorPixelCtx.translate(offsetX + ox, offsetY + oy);
+        vectorPixelCtx.rotate(rotation);
+        vectorPixelCtx.translate(-ox, -oy);
+      } else {
+        vectorPixelCtx.translate(offsetX, offsetY);
+      }
+      drawVectorItemsToContext(vectorPixelCtx, items, true);
+      vectorPixelCtx.restore();
+
+      const imgData = vectorPixelCtx.getImageData(0, 0, WORLD_W, WORLD_H);
+      const d = imgData.data;
+      // Coverage bias toward solid pixels so thin strokes never drop out
+      for (let i = 3; i < d.length; i += 4) {
+        const a = d[i];
+        if (a > 0) d[i] = a >= 12 ? 255 : 0;
+      }
+      vectorPixelCtx.putImageData(imgData, 0, 0);
+
+      if (tintColor) {
+        drawTintedCanvas(targetCtx, vectorPixelCanvas, 0, 0, tintColor, alpha);
+      } else {
+        targetCtx.save();
+        targetCtx.imageSmoothingEnabled = false;
+        targetCtx.globalAlpha = alpha;
+        targetCtx.drawImage(vectorPixelCanvas, 0, 0);
+        targetCtx.restore();
+      }
+      return;
+    }
+
     if (vectorScratchCanvas.width !== targetW || vectorScratchCanvas.height !== targetH) {
       vectorScratchCanvas.width = targetW;
       vectorScratchCanvas.height = targetH;
@@ -2196,7 +3528,17 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     vectorScratchCtx.rect(0, 0, WORLD_W, WORLD_H);
     vectorScratchCtx.clip();
 
-    vectorScratchCtx.translate(offsetX, offsetY);
+    if (!isIdentityMat(parentMat)) {
+      vectorScratchCtx.transform(...parentMat);
+    }
+
+    if (rotation) {
+      vectorScratchCtx.translate(offsetX + ox, offsetY + oy);
+      vectorScratchCtx.rotate(rotation);
+      vectorScratchCtx.translate(-ox, -oy);
+    } else {
+      vectorScratchCtx.translate(offsetX, offsetY);
+    }
     drawVectorItemsToContext(vectorScratchCtx, items);
     vectorScratchCtx.restore();
 
@@ -2218,6 +3560,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   function renderVectorCelToContext(
+    rootSc: Scene,
     targetCtx: CanvasRenderingContext2D,
     vCel: VectorCel,
     targetW: number,
@@ -2227,13 +3570,20 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     vx: number,
     vy: number,
     alpha = 1,
-    tintColor?: string
+    tintColor?: string,
+    parentMat: Mat2D = MAT_ID,
+    overrideOffsetX?: number,
+    overrideOffsetY?: number
   ): void {
+    const ox = typeof overrideOffsetX === 'number' ? overrideOffsetX : vCel.offsetX;
+    const oy = typeof overrideOffsetY === 'number' ? overrideOffsetY : vCel.offsetY;
+    const rot = vCel.rotation || 0;
+    const piv = rot ? getLayerPivotLocal(rootSc, 'vector', vCel) : { ox: 0, oy: 0 };
     renderVectorItemsWithOffset(
       targetCtx,
       vCel.items,
-      vCel.offsetX,
-      vCel.offsetY,
+      ox,
+      oy,
       targetW,
       targetH,
       cam,
@@ -2241,7 +3591,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       vx,
       vy,
       alpha,
-      tintColor
+      tintColor,
+      piv.ox,
+      piv.oy,
+      rot,
+      parentMat
     );
   }
 
@@ -2251,8 +3605,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     clipId: string,
     outerFrame: number,
     originFrame: number,
-    accOffsetX: number,
-    accOffsetY: number,
+    outerMat: Mat2D,
     targetW: number,
     targetH: number,
     cam: CameraKey,
@@ -2264,66 +3617,92 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (depth > 12) return;
     const clip = sc.nestedClips.get(clipId);
     if (!clip) return;
+    normalizeTargetHierarchy(clip);
     const clipFrame = getClipLoopFrame(clip, outerFrame, originFrame);
 
-    const subCel = getCelEntryInScene(clip, clipFrame);
-    if (subCel) {
-      if (subCel.cel.nestId) {
-        renderNestedClipAtFrame(
-          sc,
-          targetCtx,
-          subCel.cel.nestId,
-          clipFrame,
-          subCel.cel.nestOriginFrame ?? 0,
-          accOffsetX + subCel.cel.offsetX,
-          accOffsetY + subCel.cel.offsetY,
-          targetW,
-          targetH,
-          cam,
-          totalViewScale,
-          vx,
-          vy,
-          depth + 1
-        );
-      } else {
-        targetCtx.imageSmoothingEnabled = false;
-        targetCtx.drawImage(subCel.cel.canvas, accOffsetX + subCel.cel.offsetX, accOffsetY + subCel.cel.offsetY);
-      }
-    }
+    for (let li = clip.layerOrder.length - 1; li >= 0; li--) {
+      const layerKey = clip.layerOrder[li];
+      const pMat = getParentWorldMatrix(sc, clip, layerKey, clipFrame);
+      const combMat: Mat2D = isIdentityMat(outerMat) ? pMat : mulMat(outerMat, pMat);
 
-    const subVCel = getVectorCelEntryInScene(clip, clipFrame);
-    if (subVCel) {
-      if (subVCel.cel.nestId) {
-        renderNestedClipAtFrame(
-          sc,
-          targetCtx,
-          subVCel.cel.nestId,
-          clipFrame,
-          subVCel.cel.nestOriginFrame ?? 0,
-          accOffsetX + subVCel.cel.offsetX,
-          accOffsetY + subVCel.cel.offsetY,
-          targetW,
-          targetH,
-          cam,
-          totalViewScale,
-          vx,
-          vy,
-          depth + 1
-        );
-      } else if (subVCel.cel.items.length > 0) {
-        renderVectorItemsWithOffset(
-          targetCtx,
-          subVCel.cel.items,
-          accOffsetX + subVCel.cel.offsetX,
-          accOffsetY + subVCel.cel.offsetY,
-          targetW,
-          targetH,
-          cam,
-          totalViewScale,
-          vx,
-          vy,
-          1
-        );
+      if (layerKey.startsWith('cel:')) {
+        const cTrk = clip.celTracks.find((t) => t.id === layerKey.slice(4));
+        if (!cTrk || !cTrk.visible) continue;
+        const subCel = getCelEntryInMap(cTrk.cels, clipFrame);
+        if (!subCel) continue;
+        const subOff = getCelOffsetAtFrame(subCel.cel, subCel.start, clipFrame);
+        const subRot = subCel.cel.rotation || 0;
+        const subPiv = subRot ? getLayerPivotLocal(sc, 'cel', subCel.cel) : { ox: 0, oy: 0 };
+        if (subCel.cel.nestId) {
+          const selfMat = makeLayerLocalTransform(subOff.offsetX, subOff.offsetY, subPiv.ox, subPiv.oy, subRot);
+          const nextOuter = mulMat(combMat, selfMat);
+          renderNestedClipAtFrame(
+            sc,
+            targetCtx,
+            subCel.cel.nestId,
+            clipFrame,
+            subCel.cel.nestOriginFrame ?? 0,
+            nextOuter,
+            targetW,
+            targetH,
+            cam,
+            totalViewScale,
+            vx,
+            vy,
+            depth + 1
+          );
+        } else {
+          targetCtx.save();
+          if (!isIdentityMat(combMat)) targetCtx.transform(...combMat);
+          drawTransformedCanvas(targetCtx, subCel.cel.canvas, subOff.offsetX, subOff.offsetY, subPiv.ox, subPiv.oy, subRot);
+          targetCtx.restore();
+        }
+      } else if (layerKey.startsWith('vector:')) {
+        const trk = clip.vectorTracks.find((t) => t.id === layerKey.slice(7));
+        if (!trk || !trk.visible) continue;
+        const subVCel = getVectorCelEntryInMap(trk.cels, clipFrame);
+        if (!subVCel) continue;
+        const vOff = getCelOffsetAtFrame(subVCel.cel, subVCel.start, clipFrame);
+        const vRot = subVCel.cel.rotation || 0;
+        const vPiv = vRot ? getLayerPivotLocal(sc, 'vector', subVCel.cel) : { ox: 0, oy: 0 };
+        if (subVCel.cel.nestId) {
+          const selfMat = makeLayerLocalTransform(vOff.offsetX, vOff.offsetY, vPiv.ox, vPiv.oy, vRot);
+          const nextOuter = mulMat(combMat, selfMat);
+          renderNestedClipAtFrame(
+            sc,
+            targetCtx,
+            subVCel.cel.nestId,
+            clipFrame,
+            subVCel.cel.nestOriginFrame ?? 0,
+            nextOuter,
+            targetW,
+            targetH,
+            cam,
+            totalViewScale,
+            vx,
+            vy,
+            depth + 1
+          );
+        } else if (subVCel.cel.items.length > 0) {
+          renderVectorItemsWithOffset(
+            targetCtx,
+            subVCel.cel.items,
+            vOff.offsetX,
+            vOff.offsetY,
+            targetW,
+            targetH,
+            cam,
+            totalViewScale,
+            vx,
+            vy,
+            1,
+            undefined,
+            vPiv.ox,
+            vPiv.oy,
+            vRot,
+            combMat
+          );
+        }
       }
     }
   }
@@ -2342,8 +3721,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       clipId,
       outerFrame,
       originFrame,
-      0,
-      0,
+      MAT_ID,
       WORLD_W,
       WORLD_H,
       idCam,
@@ -2361,7 +3739,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     offsetX: number,
     offsetY: number,
     tintColor: string,
-    alpha: number
+    alpha: number,
+    ox = 0,
+    oy = 0,
+    rotation = 0
   ): void {
     const w = srcCanvas.width;
     const h = srcCanvas.height;
@@ -2381,21 +3762,189 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     targetCtx.save();
     targetCtx.imageSmoothingEnabled = false;
     targetCtx.globalAlpha = alpha;
-    targetCtx.drawImage(onionCanvas, offsetX, offsetY);
+    if (rotation) {
+      targetCtx.translate(offsetX + ox, offsetY + oy);
+      targetCtx.rotate(rotation);
+      targetCtx.translate(-ox, -oy);
+    } else {
+      targetCtx.translate(offsetX, offsetY);
+    }
+    targetCtx.drawImage(onionCanvas, 0, 0);
     targetCtx.restore();
   }
 
-  function drawTintedCel(targetCtx: CanvasRenderingContext2D, cel: Cel, tintColor: string, alpha: number): void {
-    drawTintedCanvas(targetCtx, cel.canvas, cel.offsetX, cel.offsetY, tintColor, alpha);
+  function drawTintedCel(
+    rootSc: Scene,
+    targetCtx: CanvasRenderingContext2D,
+    cel: Cel,
+    tintColor: string,
+    alpha: number,
+    overrideOffsetX?: number,
+    overrideOffsetY?: number
+  ): void {
+    const rot = cel.rotation || 0;
+    const piv = rot ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
+    drawTintedCanvas(
+      targetCtx,
+      cel.canvas,
+      typeof overrideOffsetX === 'number' ? overrideOffsetX : cel.offsetX,
+      typeof overrideOffsetY === 'number' ? overrideOffsetY : cel.offsetY,
+      tintColor,
+      alpha,
+      piv.ox,
+      piv.oy,
+      rot
+    );
   }
 
-  let hoverStagePt: Point2D | null = null;
-  let isRightErasing = false;
+
+  type ActiveLayerGizmoInfo = {
+    layer: 'cel' | 'vector' | 'bg' | 'mouth';
+    layerKey: string;
+    worldOx: number;
+    worldOy: number;
+    ox: number;
+    oy: number;
+    rotation: number;
+    localRotation: number;
+    parentRot: number;
+    parentMat: Mat2D;
+    defaultOx: number;
+    defaultOy: number;
+    orbitRadius: number;
+    handleX: number;
+    handleY: number;
+    celEntry?: { start: number; cel: Cel } | null;
+    vecEntry?: { start: number; cel: VectorCel } | null;
+  };
+
+  function getActiveLayerGizmoInfo(rootSc: Scene, frame: number, invScale = 1): ActiveLayerGizmoInfo | null {
+    const target = activeTimelineTarget();
+    const orbitRadius = 52 * invScale;
+    const makeResult = (
+      layer: 'cel' | 'vector' | 'bg' | 'mouth',
+      layerKey: string,
+      localWorldOx: number,
+      localWorldOy: number,
+      ox: number,
+      oy: number,
+      localRotation: number,
+      defaultOx: number,
+      defaultOy: number,
+      extra?: { celEntry?: { start: number; cel: Cel } | null; vecEntry?: { start: number; cel: VectorCel } | null }
+    ): ActiveLayerGizmoInfo => {
+      const parentMat = getParentWorldMatrix(rootSc, target, layerKey, frame);
+      const parentRot = isIdentityMat(parentMat) ? 0 : Math.atan2(parentMat[1], parentMat[0]);
+      const wp = isIdentityMat(parentMat) ? { x: localWorldOx, y: localWorldOy } : applyMatPt(parentMat, { x: localWorldOx, y: localWorldOy });
+      const totalRot = parentRot + localRotation;
+      const ang = totalRot - Math.PI / 2;
+      return {
+        layer,
+        layerKey,
+        worldOx: wp.x,
+        worldOy: wp.y,
+        ox,
+        oy,
+        rotation: totalRot,
+        localRotation,
+        parentRot,
+        parentMat,
+        defaultOx,
+        defaultOy,
+        orbitRadius,
+        handleX: wp.x + Math.cos(ang) * orbitRadius,
+        handleY: wp.y + Math.sin(ang) * orbitRadius,
+        ...extra,
+      };
+    };
+
+    if (state.activeLayer === 'cel') {
+      const activeTrk = getActiveCelTrackInTarget(target);
+      if (!activeTrk.visible) return null;
+      const key = `cel:${activeTrk.id}`;
+      const entry = getCelEntryInMap(activeTrk.cels, frame);
+      if (entry) {
+        const off = getCelOffsetAtFrame(entry.cel, entry.start, frame);
+        const def = getCelVisualAnchor(rootSc, entry.cel);
+        const piv = getLayerPivotLocal(rootSc, 'cel', entry.cel);
+        return makeResult(
+          'cel',
+          key,
+          off.offsetX + piv.ox,
+          off.offsetY + piv.oy,
+          piv.ox,
+          piv.oy,
+          entry.cel.rotation || 0,
+          def.ax,
+          def.ay,
+          { celEntry: entry }
+        );
+      }
+      return makeResult('cel', key, WORLD_W * 0.5, WORLD_H * 0.5, WORLD_W * 0.5, WORLD_H * 0.5, 0, WORLD_W * 0.5, WORLD_H * 0.5, {
+        celEntry: null,
+      });
+    }
+
+    if (state.activeLayer === 'vector') {
+      const activeTrk = getActiveVectorTrackInTarget(target);
+      if (!activeTrk.visible) return null;
+      const key = `vector:${activeTrk.id}`;
+      const entry = getVectorCelEntryInMap(activeTrk.cels, frame);
+      if (entry) {
+        const off = getCelOffsetAtFrame(entry.cel, entry.start, frame);
+        const def = computeVectorCelCenter(rootSc, entry.cel);
+        const piv = getLayerPivotLocal(rootSc, 'vector', entry.cel);
+        return makeResult(
+          'vector',
+          key,
+          off.offsetX + piv.ox,
+          off.offsetY + piv.oy,
+          piv.ox,
+          piv.oy,
+          entry.cel.rotation || 0,
+          def.ax,
+          def.ay,
+          { vecEntry: entry }
+        );
+      }
+      return makeResult('vector', key, WORLD_W * 0.5, WORLD_H * 0.5, WORLD_W * 0.5, WORLD_H * 0.5, 0, WORLD_W * 0.5, WORLD_H * 0.5, {
+        vecEntry: null,
+      });
+    }
+
+    if (state.activeLayer === 'bg' && nestStack.length === 0) {
+      const bg = getActiveBgLayerInScene(rootSc);
+      if (!bg.visible) return null;
+      const key = `bg:${bg.id}`;
+      const def = bg.hasInk ? computeCanvasInkCenter(bg.canvas) || { ax: WORLD_W * 0.5, ay: WORLD_H * 0.5 } : { ax: WORLD_W * 0.5, ay: WORLD_H * 0.5 };
+      const piv = getLayerPivotLocal(rootSc, 'bg', bg);
+      return makeResult('bg', key, bg.offsetX + piv.ox, bg.offsetY + piv.oy, piv.ox, piv.oy, bg.rotation || 0, def.ax, def.ay);
+    }
+
+    if (state.activeLayer === 'mouth' && nestStack.length === 0) {
+      const ml = getActiveMouthLayerInScene(rootSc);
+      if (!ml.visible) return null;
+      const key = `mouth:${ml.id}`;
+      const m: MouthKey = getEvaluatedMouthInScene(rootSc, frame, ml) || {
+        viseme: 0,
+        x: Math.round(WORLD_W / 2),
+        y: Math.round(WORLD_H * 0.56),
+        scale: 100,
+      };
+      const odx = m.originDx || 0;
+      const ody = m.originDy || 0;
+      return makeResult('mouth', key, m.x + odx, m.y + ody, odx, ody, m.rotation || 0, 0, 0);
+    }
+
+    return null;
+  }
 
   function renderStageOverlayGuides(
     targetCtx: CanvasRenderingContext2D,
     cam: CameraKey,
-    totalViewScale: number
+    totalViewScale: number,
+    frame = state.currentFrame,
+    rootSc: Scene = activeScene()
   ): void {
     const cs = cam.scale / 100;
     const inv = 1 / (totalViewScale * cs);
@@ -2404,6 +3953,176 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (state.tool === 'moveCam') targetCtx.setLineDash([6 * inv, 4 * inv]);
     targetCtx.strokeRect(0, 0, WORLD_W, WORLD_H);
     targetCtx.setLineDash([]);
+
+    if (!state.isPlaying && (state.activeLayer === 'cel' || state.activeLayer === 'vector')) {
+      const target = activeTimelineTarget();
+      const isVec = state.activeLayer === 'vector';
+      const activeKey = getLayerKeyForActive(target);
+      const trkVisible = isVec
+        ? getActiveVectorTrackInTarget(target).visible
+        : getActiveCelTrackInTarget(target).visible;
+      const motionEntry: { start: number; cel: Cel | VectorCel } | null = trkVisible
+        ? isVec
+          ? getVectorCelEntryInMap(getActiveVectorTrackInTarget(target).cels, frame)
+          : getCelEntryInScene(target, frame)
+        : null;
+      const keys = motionEntry ? getActivePosKeys(motionEntry.cel) : [];
+      if (motionEntry && keys.length >= 2) {
+        const { ax, ay } = isVec
+          ? computeVectorCelCenter(rootSc, motionEntry.cel as VectorCel)
+          : getCelVisualAnchor(rootSc, motionEntry.cel as Cel);
+        const curRel = frame - motionEntry.start;
+        const fullKeys = motionEntry.cel.posKeys || [];
+        const isMoveTool = state.tool === 'moveCam';
+        const celParentMat = getParentWorldMatrix(rootSc, target, activeKey, frame);
+
+        targetCtx.save();
+        if (!isIdentityMat(celParentMat)) targetCtx.transform(...celParentMat);
+
+        for (let i = 0; i < keys.length - 1; i++) {
+          const a = keys[i];
+          const b = keys[i + 1];
+          const fullIdx = fullKeys.indexOf(a);
+          const p0 = { x: a.offsetX + ax, y: a.offsetY + ay };
+          const p2 = { x: b.offsetX + ax, y: b.offsetY + ay };
+          const mx = (p0.x + p2.x) * 0.5;
+          const my = (p0.y + p2.y) * 0.5;
+          const pc = { x: mx + (a.ctrlDx ?? 0), y: my + (a.ctrlDy ?? 0) };
+          const isCurved = Math.hypot(a.ctrlDx ?? 0, a.ctrlDy ?? 0) > 1;
+          const isHoverSeg =
+            hoverMotionHit &&
+            (hoverMotionHit.kind === 'curveHandle' || hoverMotionHit.kind === 'segment') &&
+            hoverMotionHit.segIndex === fullIdx;
+
+          if (isMoveTool && (isCurved || isHoverSeg)) {
+            targetCtx.beginPath();
+            targetCtx.moveTo(p0.x, p0.y);
+            targetCtx.lineTo(pc.x, pc.y);
+            targetCtx.lineTo(p2.x, p2.y);
+            targetCtx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+            targetCtx.lineWidth = 1 * inv;
+            targetCtx.setLineDash([3 * inv, 3 * inv]);
+            targetCtx.stroke();
+            targetCtx.setLineDash([]);
+          }
+
+          if (b.relFrame <= curRel) {
+            targetCtx.beginPath();
+            targetCtx.moveTo(p0.x, p0.y);
+            targetCtx.quadraticCurveTo(pc.x, pc.y, p2.x, p2.y);
+            targetCtx.strokeStyle = isHoverSeg ? '#7dd3fc' : '#38bdf8';
+            targetCtx.lineWidth = (isHoverSeg ? 3.2 : 2.3) * inv;
+            targetCtx.setLineDash([]);
+            targetCtx.stroke();
+          } else if (a.relFrame >= curRel) {
+            targetCtx.beginPath();
+            targetCtx.moveTo(p0.x, p0.y);
+            targetCtx.quadraticCurveTo(pc.x, pc.y, p2.x, p2.y);
+            targetCtx.strokeStyle = isHoverSeg ? '#fde68a' : '#fbbf24';
+            targetCtx.lineWidth = (isHoverSeg ? 3.0 : 2.1) * inv;
+            targetCtx.setLineDash([7 * inv, 5 * inv]);
+            targetCtx.stroke();
+            targetCtx.setLineDash([]);
+          } else {
+            const t = (curRel - a.relFrame) / Math.max(1, b.relFrame - a.relFrame);
+            const q0 = { x: p0.x + (pc.x - p0.x) * t, y: p0.y + (pc.y - p0.y) * t };
+            const q1 = { x: pc.x + (p2.x - pc.x) * t, y: pc.y + (p2.y - pc.y) * t };
+            const pm = { x: q0.x + (q1.x - q0.x) * t, y: q0.y + (q1.y - q0.y) * t };
+
+            targetCtx.beginPath();
+            targetCtx.moveTo(p0.x, p0.y);
+            targetCtx.quadraticCurveTo(q0.x, q0.y, pm.x, pm.y);
+            targetCtx.strokeStyle = isHoverSeg ? '#7dd3fc' : '#38bdf8';
+            targetCtx.lineWidth = (isHoverSeg ? 3.2 : 2.3) * inv;
+            targetCtx.setLineDash([]);
+            targetCtx.stroke();
+
+            targetCtx.beginPath();
+            targetCtx.moveTo(pm.x, pm.y);
+            targetCtx.quadraticCurveTo(q1.x, q1.y, p2.x, p2.y);
+            targetCtx.strokeStyle = isHoverSeg ? '#fde68a' : '#fbbf24';
+            targetCtx.lineWidth = (isHoverSeg ? 3.0 : 2.1) * inv;
+            targetCtx.setLineDash([7 * inv, 5 * inv]);
+            targetCtx.stroke();
+            targetCtx.setLineDash([]);
+          }
+
+          for (let f = a.relFrame + 1; f < b.relFrame; f++) {
+            const t = (f - a.relFrame) / (b.relFrame - a.relFrame);
+            const pt = evalSegmentPoint(a, b, t);
+            targetCtx.beginPath();
+            targetCtx.arc(pt.x + ax, pt.y + ay, 2.2 * inv, 0, Math.PI * 2);
+            targetCtx.fillStyle = f <= curRel ? 'rgba(56, 189, 248, 0.9)' : 'rgba(251, 191, 36, 0.8)';
+            targetCtx.fill();
+          }
+
+          if (isMoveTool) {
+            const mid = evalSegmentPoint(a, b, 0.5);
+            const hx = mid.x + ax;
+            const hy = mid.y + ay;
+            const isHandleHover = hoverMotionHit?.kind === 'curveHandle' && hoverMotionHit.segIndex === fullIdx;
+            const hr = (isHandleHover ? 5.6 : 4.2) * inv;
+            targetCtx.beginPath();
+            targetCtx.arc(hx, hy, hr, 0, Math.PI * 2);
+            targetCtx.fillStyle = isCurved ? '#f59e0b' : '#181a1f';
+            targetCtx.fill();
+            targetCtx.strokeStyle = isHandleHover ? '#ffffff' : '#fbbf24';
+            targetCtx.lineWidth = 1.6 * inv;
+            targetCtx.stroke();
+          }
+        }
+
+        if (isMoveTool) {
+          const curOff = getCelOffsetAtFrame(motionEntry.cel, motionEntry.start, frame);
+          const cx = curOff.offsetX + ax;
+          const cy = curOff.offsetY + ay;
+          targetCtx.beginPath();
+          targetCtx.arc(cx, cy, 4.5 * inv, 0, Math.PI * 2);
+          targetCtx.strokeStyle = 'rgba(74, 222, 128, 0.85)';
+          targetCtx.lineWidth = 1.4 * inv;
+          targetCtx.stroke();
+        }
+
+        targetCtx.font = `600 ${Math.round(10 * inv)}px system-ui, sans-serif`;
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'bottom';
+
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          const fullIdx = fullKeys.indexOf(k);
+          const kx = k.offsetX + ax;
+          const ky = k.offsetY + ay;
+          const isCurr = k.relFrame === curRel;
+          const isPast = k.relFrame < curRel;
+          const isHoverKey = hoverMotionHit?.kind === 'key' && hoverMotionHit.keyIndex === fullIdx;
+          const kr = (isCurr ? 6.5 : isHoverKey ? 6.2 : 5) * inv;
+
+          targetCtx.beginPath();
+          targetCtx.moveTo(kx, ky - kr);
+          targetCtx.lineTo(kx + kr, ky);
+          targetCtx.lineTo(kx, ky + kr);
+          targetCtx.lineTo(kx - kr, ky);
+          targetCtx.closePath();
+          targetCtx.fillStyle = isCurr ? '#4ade80' : isPast ? '#38bdf8' : '#fbbf24';
+          targetCtx.fill();
+          targetCtx.strokeStyle = isHoverKey ? '#ffffff' : '#0f1115';
+          targetCtx.lineWidth = 1.5 * inv;
+          targetCtx.stroke();
+
+          if (isMoveTool || isCurr) {
+            const label = `F${motionEntry.start + k.relFrame + 1}`;
+            targetCtx.fillStyle = 'rgba(15, 17, 21, 0.78)';
+            const tw = targetCtx.measureText(label).width + 6 * inv;
+            const th = 12 * inv;
+            targetCtx.fillRect(kx - tw * 0.5, ky - kr - th - 2 * inv, tw, th);
+            targetCtx.fillStyle = isCurr ? '#4ade80' : isPast ? '#bae6fd' : '#fde68a';
+            targetCtx.fillText(label, kx, ky - kr - 2.5 * inv);
+          }
+        }
+
+        targetCtx.restore();
+      }
+    }
 
     const showBrushPreview =
       !state.isPlaying &&
@@ -2496,6 +4215,438 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       targetCtx.stroke();
       targetCtx.restore();
     }
+
+    if (!state.isPlaying) {
+      const gizmo = getActiveLayerGizmoInfo(rootSc, frame, inv);
+      if (gizmo) {
+        const showRotateControls =
+          state.tool === 'moveCam' ||
+          moveCamState?.mode === 'moveOrigin' ||
+          moveCamState?.mode === 'rotateLayer';
+        const isHoverOrigin = hoverOriginGizmoPart === 'origin' || moveCamState?.mode === 'moveOrigin';
+        const isHoverHandle = hoverOriginGizmoPart === 'rotateHandle' || moveCamState?.mode === 'rotateLayer';
+        const oR = (isHoverOrigin ? 15 : 12) * inv;
+
+        targetCtx.save();
+        if (showRotateControls) {
+          targetCtx.beginPath();
+          targetCtx.arc(gizmo.worldOx, gizmo.worldOy, gizmo.orbitRadius, 0, Math.PI * 2);
+          targetCtx.strokeStyle = 'rgba(249, 115, 22, 0.52)';
+          targetCtx.lineWidth = 1.6 * inv;
+          targetCtx.setLineDash([4 * inv, 4 * inv]);
+          targetCtx.stroke();
+          targetCtx.setLineDash([]);
+
+          targetCtx.beginPath();
+          targetCtx.moveTo(gizmo.worldOx, gizmo.worldOy);
+          targetCtx.lineTo(gizmo.handleX, gizmo.handleY);
+          targetCtx.strokeStyle = 'rgba(249, 115, 22, 0.88)';
+          targetCtx.lineWidth = 2 * inv;
+          targetCtx.stroke();
+
+          const hR = (isHoverHandle ? 7.8 : 6.2) * inv;
+          targetCtx.beginPath();
+          targetCtx.arc(gizmo.handleX, gizmo.handleY, hR, 0, Math.PI * 2);
+          targetCtx.fillStyle = isHoverHandle ? '#fbbf24' : '#fb923c';
+          targetCtx.fill();
+          targetCtx.strokeStyle = '#0f1115';
+          targetCtx.lineWidth = 1.8 * inv;
+          targetCtx.stroke();
+
+          if (Math.abs(gizmo.rotation) > 0.004 || moveCamState?.mode === 'rotateLayer') {
+            const deg = Math.round(((gizmo.rotation * 180) / Math.PI) * 10) / 10;
+            const degTxt = `${deg}°`;
+            targetCtx.font = `600 ${Math.round(10 * inv)}px system-ui, sans-serif`;
+            targetCtx.textAlign = 'center';
+            targetCtx.textBaseline = 'bottom';
+            const tw = targetCtx.measureText(degTxt).width + 8 * inv;
+            const th = 14 * inv;
+            const tx = gizmo.handleX;
+            const ty = gizmo.handleY - hR - 3 * inv;
+            targetCtx.fillStyle = 'rgba(15, 17, 21, 0.82)';
+            targetCtx.fillRect(tx - tw * 0.5, ty - th, tw, th);
+            targetCtx.fillStyle = '#fdba74';
+            targetCtx.fillText(degTxt, tx, ty - 1.5 * inv);
+          }
+        }
+
+        // Always render twice-as-wide orange circle origin point on stage
+        targetCtx.beginPath();
+        targetCtx.arc(gizmo.worldOx, gizmo.worldOy, oR + 2 * inv, 0, Math.PI * 2);
+        targetCtx.strokeStyle = 'rgba(0, 0, 0, 0.72)';
+        targetCtx.lineWidth = 2 * inv;
+        targetCtx.stroke();
+
+        targetCtx.beginPath();
+        targetCtx.arc(gizmo.worldOx, gizmo.worldOy, oR, 0, Math.PI * 2);
+        targetCtx.fillStyle = isHoverOrigin ? '#fb923c' : '#f97316';
+        targetCtx.fill();
+        targetCtx.strokeStyle = '#fff7ed';
+        targetCtx.lineWidth = 2.2 * inv;
+        targetCtx.stroke();
+
+        targetCtx.beginPath();
+        targetCtx.arc(gizmo.worldOx, gizmo.worldOy, 3.4 * inv, 0, Math.PI * 2);
+        targetCtx.fillStyle = '#0f1115';
+        targetCtx.fill();
+
+        targetCtx.restore();
+      }
+    }
+  }
+
+  function renderSingleLayerToCtx(
+    rootSc: Scene,
+    target: Scene | NestedClip,
+    layerKey: string,
+    targetCtx: CanvasRenderingContext2D,
+    targetW: number,
+    targetH: number,
+    cam: CameraKey,
+    totalViewScale: number,
+    vx: number,
+    vy: number,
+    frame: number,
+    forExport: boolean,
+    useViewport: boolean,
+    isNestView: boolean
+  ): void {
+    const cs = cam.scale / 100;
+    const parentMat = getParentWorldMatrix(rootSc, target, layerKey, frame);
+
+    if (!isNestView && layerKey.startsWith('bg:') && 'bgLayers' in target) {
+      const bg = target.bgLayers.find((b) => b.id === layerKey.slice(3));
+      if (!bg || !bg.visible || !bg.hasInk) return;
+      const bgRot = bg.rotation || 0;
+      const bgPiv = bgRot ? getLayerPivotLocal(rootSc, 'bg', bg) : { ox: 0, oy: 0 };
+      targetCtx.save();
+      if (!isIdentityMat(parentMat)) targetCtx.transform(...parentMat);
+      drawTransformedCanvas(targetCtx, bg.canvas, bg.offsetX, bg.offsetY, bgPiv.ox, bgPiv.oy, bgRot);
+      targetCtx.restore();
+    } else if (layerKey.startsWith('cel:')) {
+      const cTrk = target.celTracks.find((t) => t.id === layerKey.slice(4));
+      if (!cTrk || !cTrk.visible) return;
+      const activeCTrk = getActiveCelTrackInTarget(target);
+      const activeEntry = getCelEntryInMap(cTrk.cels, frame);
+      const showOnion =
+        cTrk.id === activeCTrk.id &&
+        (isNestView || (!forExport && useViewport)) &&
+        !state.isPlaying &&
+        state.onionSkin &&
+        state.showCelLayer;
+
+      if (showOnion) {
+        targetCtx.save();
+        if (!isIdentityMat(parentMat)) targetCtx.transform(...parentMat);
+        if (state.onionBefore) {
+          const prevEntry = activeEntry ? getPrevCelBefore(activeEntry.start, cTrk.cels) : getPrevCelBefore(frame, cTrk.cels);
+          if (prevEntry && isCelInkFilled(rootSc, prevEntry.cel)) {
+            const prevFrame = prevEntry.start + Math.max(0, prevEntry.cel.duration - 1);
+            const prevOff = getCelOffsetAtFrame(prevEntry.cel, prevEntry.start, prevFrame);
+            const rot = prevEntry.cel.rotation || 0;
+            const piv = rot ? getLayerPivotLocal(rootSc, 'cel', prevEntry.cel) : { ox: 0, oy: 0 };
+            if (prevEntry.cel.nestId) {
+              const c = rasterizeNestedClipToWorldCanvas(rootSc, prevEntry.cel.nestId, prevFrame, prevEntry.cel.nestOriginFrame ?? 0);
+              drawTintedCanvas(targetCtx, c, prevOff.offsetX, prevOff.offsetY, '#ef4444', 0.25, piv.ox, piv.oy, rot);
+            } else {
+              drawTintedCel(rootSc, targetCtx, prevEntry.cel, '#ef4444', 0.25, prevOff.offsetX, prevOff.offsetY);
+            }
+          }
+        }
+        if (state.onionAfter) {
+          const nextEntry = activeEntry ? getNextCelAfter(activeEntry.start, cTrk.cels) : getNextCelAfter(frame, cTrk.cels);
+          if (nextEntry && isCelInkFilled(rootSc, nextEntry.cel)) {
+            const nextOff = getCelOffsetAtFrame(nextEntry.cel, nextEntry.start, nextEntry.start);
+            const rot = nextEntry.cel.rotation || 0;
+            const piv = rot ? getLayerPivotLocal(rootSc, 'cel', nextEntry.cel) : { ox: 0, oy: 0 };
+            if (nextEntry.cel.nestId) {
+              const c = rasterizeNestedClipToWorldCanvas(rootSc, nextEntry.cel.nestId, nextEntry.start, nextEntry.cel.nestOriginFrame ?? 0);
+              drawTintedCanvas(targetCtx, c, nextOff.offsetX, nextOff.offsetY, '#3b82f6', 0.22, piv.ox, piv.oy, rot);
+            } else {
+              drawTintedCel(rootSc, targetCtx, nextEntry.cel, '#3b82f6', 0.22, nextOff.offsetX, nextOff.offsetY);
+            }
+          }
+        }
+        targetCtx.restore();
+      }
+
+      if ((forExport || !useViewport || state.showCelLayer) && activeEntry) {
+        const activeOff = getCelOffsetAtFrame(activeEntry.cel, activeEntry.start, frame);
+        const rot = activeEntry.cel.rotation || 0;
+        const piv = rot ? getLayerPivotLocal(rootSc, 'cel', activeEntry.cel) : { ox: 0, oy: 0 };
+        if (activeEntry.cel.nestId) {
+          const selfMat = makeLayerLocalTransform(activeOff.offsetX, activeOff.offsetY, piv.ox, piv.oy, rot);
+          const combOuter = mulMat(parentMat, selfMat);
+          renderNestedClipAtFrame(
+            rootSc,
+            targetCtx,
+            activeEntry.cel.nestId,
+            frame,
+            activeEntry.cel.nestOriginFrame ?? 0,
+            combOuter,
+            targetW,
+            targetH,
+            cam,
+            totalViewScale,
+            vx,
+            vy,
+            0
+          );
+        } else {
+          targetCtx.save();
+          if (!isIdentityMat(parentMat)) targetCtx.transform(...parentMat);
+          drawTransformedCanvas(targetCtx, activeEntry.cel.canvas, activeOff.offsetX, activeOff.offsetY, piv.ox, piv.oy, rot);
+          targetCtx.restore();
+        }
+      }
+    } else if (layerKey.startsWith('vector:')) {
+      const trk = target.vectorTracks.find((t) => t.id === layerKey.slice(7));
+      if (!trk || !trk.visible) return;
+      const activeVecTrack = getActiveVectorTrackInTarget(target);
+      const activeVectorEntry = getVectorCelEntryInMap(activeVecTrack.cels, frame);
+      const shouldShowVector = forExport || !useViewport || state.showVectorLayer;
+
+      if (
+        trk.id === activeVecTrack.id &&
+        (isNestView || (!forExport && useViewport)) &&
+        !state.isPlaying &&
+        state.onionSkin &&
+        state.showVectorLayer
+      ) {
+        if (state.onionBefore) {
+          const prevV = activeVectorEntry
+            ? getPrevVectorCelBefore(activeVectorEntry.start, activeVecTrack.cels)
+            : getPrevVectorCelBefore(frame, activeVecTrack.cels);
+          if (prevV && isVectorCelInkFilled(rootSc, prevV.cel)) {
+            const prevFrame = prevV.start + Math.max(0, prevV.cel.duration - 1);
+            const vOff = getCelOffsetAtFrame(prevV.cel, prevV.start, prevFrame);
+            const vRot = prevV.cel.rotation || 0;
+            const vPiv = vRot ? getLayerPivotLocal(rootSc, 'vector', prevV.cel) : { ox: 0, oy: 0 };
+            if (prevV.cel.nestId) {
+              targetCtx.save();
+              if (!isIdentityMat(parentMat)) targetCtx.transform(...parentMat);
+              const c = rasterizeNestedClipToWorldCanvas(rootSc, prevV.cel.nestId, prevFrame, prevV.cel.nestOriginFrame ?? 0);
+              drawTintedCanvas(targetCtx, c, vOff.offsetX, vOff.offsetY, '#ef4444', 0.25, vPiv.ox, vPiv.oy, vRot);
+              targetCtx.restore();
+            } else {
+              renderVectorCelToContext(
+                rootSc,
+                targetCtx,
+                prevV.cel,
+                targetW,
+                targetH,
+                cam,
+                totalViewScale,
+                vx,
+                vy,
+                0.25,
+                '#ef4444',
+                parentMat,
+                vOff.offsetX,
+                vOff.offsetY
+              );
+            }
+          }
+        }
+        if (state.onionAfter) {
+          const nextV = activeVectorEntry
+            ? getNextVectorCelAfter(activeVectorEntry.start, activeVecTrack.cels)
+            : getNextVectorCelAfter(frame, activeVecTrack.cels);
+          if (nextV && isVectorCelInkFilled(rootSc, nextV.cel)) {
+            const vOff = getCelOffsetAtFrame(nextV.cel, nextV.start, nextV.start);
+            const vRot = nextV.cel.rotation || 0;
+            const vPiv = vRot ? getLayerPivotLocal(rootSc, 'vector', nextV.cel) : { ox: 0, oy: 0 };
+            if (nextV.cel.nestId) {
+              targetCtx.save();
+              if (!isIdentityMat(parentMat)) targetCtx.transform(...parentMat);
+              const c = rasterizeNestedClipToWorldCanvas(rootSc, nextV.cel.nestId, nextV.start, nextV.cel.nestOriginFrame ?? 0);
+              drawTintedCanvas(targetCtx, c, vOff.offsetX, vOff.offsetY, '#3b82f6', 0.22, vPiv.ox, vPiv.oy, vRot);
+              targetCtx.restore();
+            } else {
+              renderVectorCelToContext(
+                rootSc,
+                targetCtx,
+                nextV.cel,
+                targetW,
+                targetH,
+                cam,
+                totalViewScale,
+                vx,
+                vy,
+                0.22,
+                '#3b82f6',
+                parentMat,
+                vOff.offsetX,
+                vOff.offsetY
+              );
+            }
+          }
+        }
+      }
+
+      if (isNestView ? state.showVectorLayer : shouldShowVector) {
+        const vEntry = getVectorCelEntryInMap(trk.cels, frame);
+        if (!vEntry) return;
+        const vOff = getCelOffsetAtFrame(vEntry.cel, vEntry.start, frame);
+        const vRot = vEntry.cel.rotation || 0;
+        const vPiv = vRot ? getLayerPivotLocal(rootSc, 'vector', vEntry.cel) : { ox: 0, oy: 0 };
+        if (vEntry.cel.nestId) {
+          const selfMat = makeLayerLocalTransform(vOff.offsetX, vOff.offsetY, vPiv.ox, vPiv.oy, vRot);
+          const combOuter = mulMat(parentMat, selfMat);
+          renderNestedClipAtFrame(
+            rootSc,
+            targetCtx,
+            vEntry.cel.nestId,
+            frame,
+            vEntry.cel.nestOriginFrame ?? 0,
+            combOuter,
+            targetW,
+            targetH,
+            cam,
+            totalViewScale,
+            vx,
+            vy,
+            0
+          );
+        } else if (vEntry.cel.items.length > 0) {
+          renderVectorCelToContext(
+            rootSc,
+            targetCtx,
+            vEntry.cel,
+            targetW,
+            targetH,
+            cam,
+            totalViewScale,
+            vx,
+            vy,
+            1,
+            undefined,
+            parentMat,
+            vOff.offsetX,
+            vOff.offsetY
+          );
+        }
+      }
+    } else if (!isNestView && layerKey.startsWith('mouth:') && 'mouthLayers' in target) {
+      const ml = target.mouthLayers.find((m) => m.id === layerKey.slice(6));
+      if (!ml || !ml.visible) return;
+      const mouthEval = getEvaluatedMouthInScene(rootSc, frame, ml);
+      if (mouthEval) {
+        const vis = ml.visemes[mouthEval.viseme] || ml.visemes[0];
+        const ms = (mouthEval.scale || 100) / 100;
+        const dw = Math.round(MOUTH_W * ms);
+        const dh = Math.round(MOUTH_H * ms);
+        const odx = mouthEval.originDx || 0;
+        const ody = mouthEval.originDy || 0;
+        const mRot = mouthEval.rotation || 0;
+
+        targetCtx.save();
+        if (!isIdentityMat(parentMat)) targetCtx.transform(...parentMat);
+        targetCtx.imageSmoothingEnabled = false;
+        targetCtx.translate(mouthEval.x + odx, mouthEval.y + ody);
+        if (mRot) targetCtx.rotate(mRot);
+        targetCtx.translate(-dw / 2 - odx, -dh / 2 - ody);
+        targetCtx.drawImage(vis.canvas, 0, 0, dw, dh);
+
+        if (!forExport && useViewport && !state.isPlaying && state.activeLayer === 'mouth' && ml.id === getActiveMouthLayerInScene(rootSc).id) {
+          const inv = 1 / (totalViewScale * cs);
+          targetCtx.strokeStyle = '#f472b6';
+          targetCtx.lineWidth = 1.5 * inv;
+          targetCtx.setLineDash([5 * inv, 3 * inv]);
+          targetCtx.strokeRect(0, 0, dw, dh);
+          targetCtx.setLineDash([]);
+        }
+        targetCtx.restore();
+      }
+    }
+  }
+
+  const HIT_S = 13;
+  const hitTestCanvas = document.createElement('canvas');
+  hitTestCanvas.width = HIT_S;
+  hitTestCanvas.height = HIT_S;
+  const hitTestCtx = hitTestCanvas.getContext('2d', { willReadFrequently: true })!;
+
+  function hitTestTopDrawableLayerAt(
+    rootSc: Scene,
+    target: Scene | NestedClip,
+    frame: number,
+    stagePt: Point2D,
+    cam: CameraKey,
+    totalViewScale: number,
+    vx: number,
+    vy: number
+  ): string | null {
+    normalizeTargetHierarchy(target);
+    const isNestView = nestStack.length > 0;
+    const cs = cam.scale / 100;
+    const hitVx = vx + (stage.width * 0.5 - stagePt.x);
+    const hitVy = vy + (stage.height * 0.5 - stagePt.y);
+    const half = Math.floor(HIT_S / 2);
+    let outerFallback: string | null = null;
+
+    for (let li = 0; li < target.layerOrder.length; li++) {
+      const layerKey = target.layerOrder[li];
+      if (!state.showVectorLayer && layerKey.startsWith('vector:')) continue;
+      if (!state.showCelLayer && layerKey.startsWith('cel:')) continue;
+
+      hitTestCtx.setTransform(1, 0, 0, 1, 0, 0);
+      hitTestCtx.clearRect(0, 0, HIT_S, HIT_S);
+      hitTestCtx.save();
+      hitTestCtx.imageSmoothingEnabled = false;
+      hitTestCtx.translate(HIT_S / 2 + hitVx, HIT_S / 2 + hitVy);
+      hitTestCtx.scale(totalViewScale, totalViewScale);
+      hitTestCtx.translate(-WORLD_W / 2, -WORLD_H / 2);
+      hitTestCtx.translate(WORLD_W / 2 + cam.x, WORLD_H / 2 + cam.y);
+      hitTestCtx.scale(cs, cs);
+      hitTestCtx.translate(-WORLD_W / 2, -WORLD_H / 2);
+      hitTestCtx.beginPath();
+      hitTestCtx.rect(0, 0, WORLD_W, WORLD_H);
+      hitTestCtx.clip();
+
+      renderSingleLayerToCtx(
+        rootSc,
+        target,
+        layerKey,
+        hitTestCtx,
+        HIT_S,
+        HIT_S,
+        cam,
+        totalViewScale,
+        hitVx,
+        hitVy,
+        frame,
+        true,
+        false,
+        isNestView
+      );
+      hitTestCtx.restore();
+
+      const data = hitTestCtx.getImageData(0, 0, HIT_S, HIT_S).data;
+      let hitCenter = false;
+      let hitRing = false;
+      for (let py = 0; py < HIT_S; py++) {
+        const dy = py - half;
+        for (let px = 0; px < HIT_S; px++) {
+          const dx = px - half;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > 25) continue;
+          const a = data[(py * HIT_S + px) * 4 + 3];
+          if (a > 8) {
+            if (d2 <= 2) {
+              hitCenter = true;
+              break;
+            }
+            hitRing = true;
+          }
+        }
+        if (hitCenter) break;
+      }
+      if (hitCenter) return layerKey;
+      if (hitRing && outerFallback === null) outerFallback = layerKey;
+    }
+
+    return outerFallback;
   }
 
   function renderNestToContext(
@@ -2506,6 +4657,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     targetH: number,
     frame: number
   ): void {
+    normalizeTargetHierarchy(clip);
     const cam: CameraKey = { x: 0, y: 0, scale: 100, ease: 'linear' };
     const totalViewScale = getTotalViewScale();
     const vx = state.viewPanX;
@@ -2530,111 +4682,27 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     targetCtx.fillStyle = '#ffffff';
     targetCtx.fillRect(0, 0, WORLD_W, WORLD_H);
 
-    const activeEntry = getCelEntryInScene(clip, frame);
-    if (!state.isPlaying && state.onionSkin && state.showCelLayer) {
-      if (state.onionBefore) {
-        const prevEntry = activeEntry ? getPrevCelBefore(activeEntry.start) : getPrevCelBefore(frame);
-        if (prevEntry && isCelInkFilled(rootSc, prevEntry.cel)) {
-          if (prevEntry.cel.nestId) {
-            const c = rasterizeNestedClipToWorldCanvas(rootSc, prevEntry.cel.nestId, prevEntry.start, prevEntry.cel.nestOriginFrame ?? 0);
-            drawTintedCanvas(targetCtx, c, prevEntry.cel.offsetX, prevEntry.cel.offsetY, '#ef4444', 0.25);
-          } else {
-            drawTintedCel(targetCtx, prevEntry.cel, '#ef4444', 0.25);
-          }
-        }
-      }
-      if (state.onionAfter) {
-        const nextEntry = activeEntry ? getNextCelAfter(activeEntry.start) : getNextCelAfter(frame);
-        if (nextEntry && isCelInkFilled(rootSc, nextEntry.cel)) {
-          if (nextEntry.cel.nestId) {
-            const c = rasterizeNestedClipToWorldCanvas(rootSc, nextEntry.cel.nestId, nextEntry.start, nextEntry.cel.nestOriginFrame ?? 0);
-            drawTintedCanvas(targetCtx, c, nextEntry.cel.offsetX, nextEntry.cel.offsetY, '#3b82f6', 0.22);
-          } else {
-            drawTintedCel(targetCtx, nextEntry.cel, '#3b82f6', 0.22);
-          }
-        }
-      }
-    }
-
-    if (state.showCelLayer && activeEntry) {
-      if (activeEntry.cel.nestId) {
-        renderNestedClipAtFrame(
-          rootSc,
-          targetCtx,
-          activeEntry.cel.nestId,
-          frame,
-          activeEntry.cel.nestOriginFrame ?? 0,
-          activeEntry.cel.offsetX,
-          activeEntry.cel.offsetY,
-          targetW,
-          targetH,
-          cam,
-          totalViewScale,
-          vx,
-          vy,
-          0
-        );
-      } else {
-        targetCtx.imageSmoothingEnabled = false;
-        targetCtx.drawImage(activeEntry.cel.canvas, activeEntry.cel.offsetX, activeEntry.cel.offsetY);
-      }
-    }
-
-    const activeVectorEntry = getVectorCelEntryInScene(clip, frame);
-    if (!state.isPlaying && state.onionSkin && state.showVectorLayer) {
-      if (state.onionBefore) {
-        const prevV = activeVectorEntry
-          ? getPrevVectorCelBefore(activeVectorEntry.start)
-          : getPrevVectorCelBefore(frame);
-        if (prevV && isVectorCelInkFilled(rootSc, prevV.cel)) {
-          if (prevV.cel.nestId) {
-            const c = rasterizeNestedClipToWorldCanvas(rootSc, prevV.cel.nestId, prevV.start, prevV.cel.nestOriginFrame ?? 0);
-            drawTintedCanvas(targetCtx, c, prevV.cel.offsetX, prevV.cel.offsetY, '#ef4444', 0.25);
-          } else {
-            renderVectorCelToContext(targetCtx, prevV.cel, targetW, targetH, cam, totalViewScale, vx, vy, 0.25, '#ef4444');
-          }
-        }
-      }
-      if (state.onionAfter) {
-        const nextV = activeVectorEntry
-          ? getNextVectorCelAfter(activeVectorEntry.start)
-          : getNextVectorCelAfter(frame);
-        if (nextV && isVectorCelInkFilled(rootSc, nextV.cel)) {
-          if (nextV.cel.nestId) {
-            const c = rasterizeNestedClipToWorldCanvas(rootSc, nextV.cel.nestId, nextV.start, nextV.cel.nestOriginFrame ?? 0);
-            drawTintedCanvas(targetCtx, c, nextV.cel.offsetX, nextV.cel.offsetY, '#3b82f6', 0.22);
-          } else {
-            renderVectorCelToContext(targetCtx, nextV.cel, targetW, targetH, cam, totalViewScale, vx, vy, 0.22, '#3b82f6');
-          }
-        }
-      }
-    }
-
-    if (state.showVectorLayer && activeVectorEntry) {
-      if (activeVectorEntry.cel.nestId) {
-        renderNestedClipAtFrame(
-          rootSc,
-          targetCtx,
-          activeVectorEntry.cel.nestId,
-          frame,
-          activeVectorEntry.cel.nestOriginFrame ?? 0,
-          activeVectorEntry.cel.offsetX,
-          activeVectorEntry.cel.offsetY,
-          targetW,
-          targetH,
-          cam,
-          totalViewScale,
-          vx,
-          vy,
-          0
-        );
-      } else if (activeVectorEntry.cel.items.length > 0) {
-        renderVectorCelToContext(targetCtx, activeVectorEntry.cel, targetW, targetH, cam, totalViewScale, vx, vy, 1);
-      }
+    for (let li = clip.layerOrder.length - 1; li >= 0; li--) {
+      renderSingleLayerToCtx(
+        rootSc,
+        clip,
+        clip.layerOrder[li],
+        targetCtx,
+        targetW,
+        targetH,
+        cam,
+        totalViewScale,
+        vx,
+        vy,
+        frame,
+        false,
+        true,
+        true
+      );
     }
 
     targetCtx.restore();
-    renderStageOverlayGuides(targetCtx, cam, totalViewScale);
+    renderStageOverlayGuides(targetCtx, cam, totalViewScale, frame, rootSc);
     targetCtx.restore();
   }
 
@@ -2647,6 +4715,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     forExport = false,
     useViewport = false
   ): void {
+    normalizeTargetHierarchy(sc);
     const cam = getEvaluatedCameraInScene(sc, frame);
     const cs = cam.scale / 100;
     const fit = Math.min(targetW / WORLD_W, targetH / WORLD_H);
@@ -2678,142 +4747,30 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     targetCtx.fillStyle = '#ffffff';
     targetCtx.fillRect(0, 0, WORLD_W, WORLD_H);
 
-    if (sc.bgLayer.visible && sc.bgLayer.hasInk) {
-      targetCtx.imageSmoothingEnabled = false;
-      targetCtx.drawImage(sc.bgLayer.canvas, sc.bgLayer.offsetX, sc.bgLayer.offsetY);
-    }
-
-    const activeEntry = getCelEntryInScene(sc, frame);
-
-    if (!forExport && useViewport && !state.isPlaying && state.onionSkin && state.showCelLayer) {
-      if (state.onionBefore) {
-        const prevEntry = activeEntry ? getPrevCelBefore(activeEntry.start) : getPrevCelBefore(frame);
-        if (prevEntry && isCelInkFilled(sc, prevEntry.cel)) {
-          if (prevEntry.cel.nestId) {
-            const c = rasterizeNestedClipToWorldCanvas(sc, prevEntry.cel.nestId, prevEntry.start, prevEntry.cel.nestOriginFrame ?? 0);
-            drawTintedCanvas(targetCtx, c, prevEntry.cel.offsetX, prevEntry.cel.offsetY, '#ef4444', 0.25);
-          } else {
-            drawTintedCel(targetCtx, prevEntry.cel, '#ef4444', 0.25);
-          }
-        }
-      }
-      if (state.onionAfter) {
-        const nextEntry = activeEntry ? getNextCelAfter(activeEntry.start) : getNextCelAfter(frame);
-        if (nextEntry && isCelInkFilled(sc, nextEntry.cel)) {
-          if (nextEntry.cel.nestId) {
-            const c = rasterizeNestedClipToWorldCanvas(sc, nextEntry.cel.nestId, nextEntry.start, nextEntry.cel.nestOriginFrame ?? 0);
-            drawTintedCanvas(targetCtx, c, nextEntry.cel.offsetX, nextEntry.cel.offsetY, '#3b82f6', 0.22);
-          } else {
-            drawTintedCel(targetCtx, nextEntry.cel, '#3b82f6', 0.22);
-          }
-        }
-      }
-    }
-
-    if ((forExport || !useViewport || state.showCelLayer) && activeEntry) {
-      if (activeEntry.cel.nestId) {
-        renderNestedClipAtFrame(
-          sc,
-          targetCtx,
-          activeEntry.cel.nestId,
-          frame,
-          activeEntry.cel.nestOriginFrame ?? 0,
-          activeEntry.cel.offsetX,
-          activeEntry.cel.offsetY,
-          targetW,
-          targetH,
-          cam,
-          totalViewScale,
-          vx,
-          vy,
-          0
-        );
-      } else {
-        targetCtx.imageSmoothingEnabled = false;
-        targetCtx.drawImage(activeEntry.cel.canvas, activeEntry.cel.offsetX, activeEntry.cel.offsetY);
-      }
-    }
-
-    const activeVectorEntry = getVectorCelEntryInScene(sc, frame);
-    const shouldShowVector = forExport || !useViewport || state.showVectorLayer;
-
-    if (!forExport && useViewport && !state.isPlaying && state.onionSkin && state.showVectorLayer) {
-      if (state.onionBefore) {
-        const prevV = activeVectorEntry
-          ? getPrevVectorCelBefore(activeVectorEntry.start)
-          : getPrevVectorCelBefore(frame);
-        if (prevV && isVectorCelInkFilled(sc, prevV.cel)) {
-          if (prevV.cel.nestId) {
-            const c = rasterizeNestedClipToWorldCanvas(sc, prevV.cel.nestId, prevV.start, prevV.cel.nestOriginFrame ?? 0);
-            drawTintedCanvas(targetCtx, c, prevV.cel.offsetX, prevV.cel.offsetY, '#ef4444', 0.25);
-          } else {
-            renderVectorCelToContext(targetCtx, prevV.cel, targetW, targetH, cam, totalViewScale, vx, vy, 0.25, '#ef4444');
-          }
-        }
-      }
-      if (state.onionAfter) {
-        const nextV = activeVectorEntry
-          ? getNextVectorCelAfter(activeVectorEntry.start)
-          : getNextVectorCelAfter(frame);
-        if (nextV && isVectorCelInkFilled(sc, nextV.cel)) {
-          if (nextV.cel.nestId) {
-            const c = rasterizeNestedClipToWorldCanvas(sc, nextV.cel.nestId, nextV.start, nextV.cel.nestOriginFrame ?? 0);
-            drawTintedCanvas(targetCtx, c, nextV.cel.offsetX, nextV.cel.offsetY, '#3b82f6', 0.22);
-          } else {
-            renderVectorCelToContext(targetCtx, nextV.cel, targetW, targetH, cam, totalViewScale, vx, vy, 0.22, '#3b82f6');
-          }
-        }
-      }
-    }
-
-    if (shouldShowVector && activeVectorEntry) {
-      if (activeVectorEntry.cel.nestId) {
-        renderNestedClipAtFrame(
-          sc,
-          targetCtx,
-          activeVectorEntry.cel.nestId,
-          frame,
-          activeVectorEntry.cel.nestOriginFrame ?? 0,
-          activeVectorEntry.cel.offsetX,
-          activeVectorEntry.cel.offsetY,
-          targetW,
-          targetH,
-          cam,
-          totalViewScale,
-          vx,
-          vy,
-          0
-        );
-      } else if (activeVectorEntry.cel.items.length > 0) {
-        renderVectorCelToContext(targetCtx, activeVectorEntry.cel, targetW, targetH, cam, totalViewScale, vx, vy, 1);
-      }
-    }
-
-    const mouthEval = getEvaluatedMouthInScene(sc, frame);
-    if (mouthEval) {
-      const vis = sc.mouthLayer.visemes[mouthEval.viseme] || sc.mouthLayer.visemes[0];
-      const ms = (mouthEval.scale || 100) / 100;
-      const dw = Math.round(MOUTH_W * ms);
-      const dh = Math.round(MOUTH_H * ms);
-      const dx = Math.round(mouthEval.x - dw / 2);
-      const dy = Math.round(mouthEval.y - dh / 2);
-      targetCtx.imageSmoothingEnabled = false;
-      targetCtx.drawImage(vis.canvas, dx, dy, dw, dh);
-
-      if (!forExport && useViewport && !state.isPlaying && state.activeLayer === 'mouth') {
-        const inv = 1 / (totalViewScale * cs);
-        targetCtx.strokeStyle = '#f472b6';
-        targetCtx.lineWidth = 1.5 * inv;
-        targetCtx.setLineDash([5 * inv, 3 * inv]);
-        targetCtx.strokeRect(dx, dy, dw, dh);
-        targetCtx.setLineDash([]);
-      }
+    // Composite layers from bottom to top of timeline (higher in timeline renders on top)
+    for (let li = sc.layerOrder.length - 1; li >= 0; li--) {
+      renderSingleLayerToCtx(
+        sc,
+        sc,
+        sc.layerOrder[li],
+        targetCtx,
+        targetW,
+        targetH,
+        cam,
+        totalViewScale,
+        vx,
+        vy,
+        frame,
+        forExport,
+        useViewport,
+        false
+      );
     }
 
     targetCtx.restore();
 
     if (!forExport && useViewport) {
-      renderStageOverlayGuides(targetCtx, cam, totalViewScale);
+      renderStageOverlayGuides(targetCtx, cam, totalViewScale, frame, sc);
     }
 
     targetCtx.restore();
@@ -2857,9 +4814,18 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   function worldToVisemeLocal(worldPt: Point2D, mouthEval: MouthKey): Point2D {
     const ms = (mouthEval.scale || 100) / 100;
+    const odx = mouthEval.originDx || 0;
+    const ody = mouthEval.originDy || 0;
+    const rot = mouthEval.rotation || 0;
+    const dx = worldPt.x - (mouthEval.x + odx);
+    const dy = worldPt.y - (mouthEval.y + ody);
+    const c = rot ? Math.cos(-rot) : 1;
+    const s = rot ? Math.sin(-rot) : 0;
+    const rx = dx * c - dy * s + odx;
+    const ry = dx * s + dy * c + ody;
     return {
-      x: (worldPt.x - mouthEval.x) / ms + MOUTH_W / 2,
-      y: (worldPt.y - mouthEval.y) / ms + MOUTH_H / 2,
+      x: rx / ms + MOUTH_W / 2,
+      y: ry / ms + MOUTH_H / 2,
     };
   }
 
@@ -2915,6 +4881,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   let activeDrawIsMouth = false;
   let activeNudgeState: {
     cel: VectorCel;
+    trackId: string;
     startLocalPt: Point2D;
     radius: number;
     targets: Array<{ pt: Point2D; origX: number; origY: number; weight: number }>;
@@ -2934,8 +4901,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   let moveCamState:
     | { mode: 'camScale'; startStagePt: Point2D; startScale: number }
     | { mode: 'camPan'; startStagePt: Point2D; startX: number; startY: number }
-    | { mode: 'mouthScale'; startStagePt: Point2D; startScale: number }
-    | { mode: 'moveMouth'; startX: number; startY: number; startStagePt: Point2D; totalScale: number }
+    | { mode: 'mouthScale'; startStagePt: Point2D; startScale: number; mouthLayer: MouthLayer }
+    | { mode: 'moveMouth'; startX: number; startY: number; startStagePt: Point2D; totalScale: number; parentMat: Mat2D; mouthLayer: MouthLayer }
     | {
         mode: 'moveVector';
         cel: VectorCel;
@@ -2943,6 +4910,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         startOffsetY: number;
         startStagePt: Point2D;
         totalScale: number;
+        parentMat: Mat2D;
         moved: boolean;
       }
     | {
@@ -2952,6 +4920,57 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         startOffsetY: number;
         startStagePt: Point2D;
         totalScale: number;
+        parentMat: Mat2D;
+        moved: boolean;
+      }
+    | {
+        mode: 'moveTweenKey';
+        layerType: 'cel' | 'vector';
+        cel: Cel | VectorCel;
+        keyIndex: number;
+        startKeyOffsetX: number;
+        startKeyOffsetY: number;
+        startStagePt: Point2D;
+        totalScale: number;
+        parentMat: Mat2D;
+        moved: boolean;
+      }
+    | {
+        mode: 'moveTweenCurve';
+        layerType: 'cel' | 'vector';
+        cel: Cel | VectorCel;
+        segIndex: number;
+        t: number;
+        startCtrlDx: number;
+        startCtrlDy: number;
+        startStagePt: Point2D;
+        totalScale: number;
+        parentMat: Mat2D;
+        moved: boolean;
+      }
+    | {
+        mode: 'moveOrigin';
+        layer: 'cel' | 'vector' | 'bg' | 'mouth';
+        layerKey: string;
+        mouthLayer?: MouthLayer;
+        targetObj: Cel | VectorCel | BgLayer | null;
+        startWorldPt: Point2D;
+        startOx: number;
+        startOy: number;
+        parentMat: Mat2D;
+        moved: boolean;
+      }
+    | {
+        mode: 'rotateLayer';
+        layer: 'cel' | 'vector' | 'bg' | 'mouth';
+        layerKey: string;
+        mouthLayer?: MouthLayer;
+        targetObj: Cel | VectorCel | BgLayer | null;
+        pivotWorldX: number;
+        pivotWorldY: number;
+        startAngle: number;
+        startRotation: number;
+        parentRot: number;
         moved: boolean;
       }
     | null = null;
@@ -3036,6 +5055,206 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     return { obj: entry ? entry.cel : null, created: !existed && Boolean(entry) };
   }
 
+  function worldToTargetParentLocal(
+    rootSc: Scene,
+    target: Scene | NestedClip,
+    layerKey: string,
+    frame: number,
+    worldPt: Point2D
+  ): Point2D {
+    const pMat = getParentWorldMatrix(rootSc, target, layerKey, frame);
+    return isIdentityMat(pMat) ? worldPt : applyMatPt(invMat(pMat), worldPt);
+  }
+
+  function startOriginOrRotateDrag(
+    layer: 'cel' | 'vector' | 'bg' | 'mouth',
+    mode: 'moveOrigin' | 'rotateLayer',
+    worldPt: Point2D
+  ): boolean {
+    const rootSc = activeScene();
+    const target = activeTimelineTarget();
+    const totalViewScale = getTotalViewScale();
+    const cam = getEvaluatedCamera(state.currentFrame);
+    const inv = 1 / (totalViewScale * (cam.scale / 100));
+    const layerKey = getLayerKeyForActive(target);
+
+    if (layer === 'mouth') {
+      if (nestStack.length > 0) return false;
+      const ml = state.mouthLayer;
+      if (!ml.visible) ml.visible = true;
+      pushMouthTransformUndo(state.currentFrame, ml);
+      const curM = getActiveMouthState(ml);
+      if (!ml.keys.has(state.currentFrame)) {
+        setMouthKeyAtCurrentFrame({}, state.currentFrame, ml);
+      }
+      const gizmo = getActiveLayerGizmoInfo(rootSc, state.currentFrame, inv)!;
+      if (mode === 'moveOrigin') {
+        moveCamState = {
+          mode: 'moveOrigin',
+          layer: 'mouth',
+          layerKey,
+          mouthLayer: ml,
+          targetObj: null,
+          startWorldPt: worldPt,
+          startOx: curM.originDx || 0,
+          startOy: curM.originDy || 0,
+          parentMat: gizmo.parentMat,
+          moved: false,
+        };
+      } else {
+        moveCamState = {
+          mode: 'rotateLayer',
+          layer: 'mouth',
+          layerKey,
+          mouthLayer: ml,
+          targetObj: null,
+          pivotWorldX: gizmo.worldOx,
+          pivotWorldY: gizmo.worldOy,
+          startAngle: Math.atan2(worldPt.y - gizmo.worldOy, worldPt.x - gizmo.worldOx),
+          startRotation: gizmo.localRotation,
+          parentRot: gizmo.parentRot,
+          moved: false,
+        };
+      }
+      stage.style.cursor = 'grabbing';
+      return true;
+    }
+
+    if (layer === 'vector') {
+      if (!state.showVectorLayer) state.showVectorLayer = true;
+      if (!state.activeVectorTrack.visible) {
+        state.activeVectorTrack.visible = true;
+        renderTimeline();
+      }
+      const existed = Boolean(getVectorCelEntryAt(state.currentFrame));
+      const { cel } = ensureVectorCelAt(state.currentFrame, true);
+      if (typeof cel.originX !== 'number' || typeof cel.originY !== 'number') {
+        const def = computeVectorCelCenter(rootSc, cel);
+        cel.originX = def.ax;
+        cel.originY = def.ay;
+      }
+      if (cel.posKeys && cel.posKeys.length > 0) pushTweenUndo(cel);
+      else pushVectorMoveUndo(cel, cel.offsetX, cel.offsetY);
+      const gizmo = getActiveLayerGizmoInfo(rootSc, state.currentFrame, inv)!;
+      if (mode === 'moveOrigin') {
+        moveCamState = {
+          mode: 'moveOrigin',
+          layer: 'vector',
+          layerKey,
+          targetObj: cel,
+          startWorldPt: worldPt,
+          startOx: gizmo.ox,
+          startOy: gizmo.oy,
+          parentMat: gizmo.parentMat,
+          moved: false,
+        };
+      } else {
+        moveCamState = {
+          mode: 'rotateLayer',
+          layer: 'vector',
+          layerKey,
+          targetObj: cel,
+          pivotWorldX: gizmo.worldOx,
+          pivotWorldY: gizmo.worldOy,
+          startAngle: Math.atan2(worldPt.y - gizmo.worldOy, worldPt.x - gizmo.worldOx),
+          startRotation: gizmo.localRotation,
+          parentRot: gizmo.parentRot,
+          moved: false,
+        };
+      }
+      if (!existed) renderTimeline();
+      stage.style.cursor = 'grabbing';
+      return true;
+    }
+
+    if (layer === 'bg') {
+      if (nestStack.length > 0) return false;
+      const { obj } = getTargetLayerForEdit(true, true);
+      if (!obj) return false;
+      if (typeof obj.originX !== 'number' || typeof obj.originY !== 'number') {
+        const def = obj.hasInk ? computeCanvasInkCenter(obj.canvas) || { ax: WORLD_W * 0.5, ay: WORLD_H * 0.5 } : { ax: WORLD_W * 0.5, ay: WORLD_H * 0.5 };
+        obj.originX = def.ax;
+        obj.originY = def.ay;
+      }
+      pushMoveUndo(obj, obj.offsetX, obj.offsetY);
+      const gizmo = getActiveLayerGizmoInfo(rootSc, state.currentFrame, inv)!;
+      if (mode === 'moveOrigin') {
+        moveCamState = {
+          mode: 'moveOrigin',
+          layer: 'bg',
+          layerKey,
+          targetObj: obj,
+          startWorldPt: worldPt,
+          startOx: gizmo.ox,
+          startOy: gizmo.oy,
+          parentMat: gizmo.parentMat,
+          moved: false,
+        };
+      } else {
+        moveCamState = {
+          mode: 'rotateLayer',
+          layer: 'bg',
+          layerKey,
+          targetObj: obj,
+          pivotWorldX: gizmo.worldOx,
+          pivotWorldY: gizmo.worldOy,
+          startAngle: Math.atan2(worldPt.y - gizmo.worldOy, worldPt.x - gizmo.worldOx),
+          startRotation: gizmo.localRotation,
+          parentRot: gizmo.parentRot,
+          moved: false,
+        };
+      }
+      stage.style.cursor = 'grabbing';
+      return true;
+    }
+
+    // Bitmap (cel) layer
+    if (!state.activeCelTrack.visible) {
+      state.activeCelTrack.visible = true;
+      renderTimeline();
+    }
+    const existed = Boolean(getCelEntryAt(state.currentFrame));
+    const entry = ensureCelAt(state.currentFrame, true);
+    const cel = entry.cel;
+    if (typeof cel.originX !== 'number' || typeof cel.originY !== 'number') {
+      const def = getCelVisualAnchor(rootSc, cel);
+      cel.originX = def.ax;
+      cel.originY = def.ay;
+    }
+    if (cel.posKeys && cel.posKeys.length > 0) pushTweenUndo(cel);
+    else pushMoveUndo(cel, cel.offsetX, cel.offsetY);
+    const gizmo = getActiveLayerGizmoInfo(rootSc, state.currentFrame, inv)!;
+    if (mode === 'moveOrigin') {
+      moveCamState = {
+        mode: 'moveOrigin',
+        layer: 'cel',
+        layerKey,
+        targetObj: cel,
+        startWorldPt: worldPt,
+        startOx: gizmo.ox,
+        startOy: gizmo.oy,
+        parentMat: gizmo.parentMat,
+        moved: false,
+      };
+    } else {
+      moveCamState = {
+        mode: 'rotateLayer',
+        layer: 'cel',
+        layerKey,
+        targetObj: cel,
+        pivotWorldX: gizmo.worldOx,
+        pivotWorldY: gizmo.worldOy,
+        startAngle: Math.atan2(worldPt.y - gizmo.worldOy, worldPt.x - gizmo.worldOx),
+        startRotation: gizmo.localRotation,
+        parentRot: gizmo.parentRot,
+        moved: false,
+      };
+    }
+    if (!existed) renderTimeline();
+    stage.style.cursor = 'grabbing';
+    return true;
+  }
+
   stage.addEventListener('pointerdown', (e) => {
     if (e.button === 1 || state.isPlaying) return;
     stage.setPointerCapture(e.pointerId);
@@ -3044,56 +5263,323 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const cam = getEvaluatedCamera(state.currentFrame);
     isPointerDown = true;
 
+    const rootSc = activeScene();
+    const target = activeTimelineTarget();
+
     if (state.tool === 'moveCam') {
+      const totalScale = (cam.scale / 100) * getTotalViewScale();
+      const worldPt = stageToWorld(stagePt, cam);
+      const inv = 1 / totalScale;
+      if (e.button === 0 && !e.shiftKey) {
+        const gizmo = getActiveLayerGizmoInfo(rootSc, state.currentFrame, inv);
+        if (gizmo) {
+          if (Math.hypot(worldPt.x - gizmo.worldOx, worldPt.y - gizmo.worldOy) <= 18 * inv) {
+            if (!startOriginOrRotateDrag(state.activeLayer, 'moveOrigin', worldPt)) isPointerDown = false;
+            renderStage();
+            return;
+          }
+          if (Math.hypot(worldPt.x - gizmo.handleX, worldPt.y - gizmo.handleY) <= 12 * inv) {
+            if (!startOriginOrRotateDrag(state.activeLayer, 'rotateLayer', worldPt)) isPointerDown = false;
+            renderStage();
+            return;
+          }
+        }
+      }
       if (e.button === 2) {
+        if ((state.activeLayer === 'cel' || state.activeLayer === 'vector') && !e.shiftKey) {
+          const activeKey = getLayerKeyForActive(target);
+          const entry: { start: number; cel: Cel | VectorCel } | null =
+            state.activeLayer === 'vector'
+              ? getVectorCelEntryAt(state.currentFrame)
+              : getCelEntryAt(state.currentFrame);
+          const hit = hitTestLayerMotionPath(rootSc, activeKey, entry, worldPt, cam, getTotalViewScale());
+          if (hit?.kind === 'key' && entry && entry.cel.posKeys && entry.cel.posKeys.length >= 2) {
+            pushTweenUndo(entry.cel);
+            const removed = entry.cel.posKeys.splice(hit.keyIndex, 1)[0];
+            if (entry.cel.posKeys.length < 2) {
+              const keep = entry.cel.posKeys[0];
+              if (keep) {
+                entry.cel.offsetX = Math.round(keep.offsetX);
+                entry.cel.offsetY = Math.round(keep.offsetY);
+              }
+              delete entry.cel.posKeys;
+            } else if (removed.relFrame === 0) {
+              entry.cel.offsetX = Math.round(entry.cel.posKeys[0].offsetX);
+              entry.cel.offsetY = Math.round(entry.cel.posKeys[0].offsetY);
+            }
+            isPointerDown = false;
+            hoverMotionHit = null;
+            renderTimeline();
+            renderStage();
+            onNotify(`Removed motion key at F${entry.start + removed.relFrame + 1}.`);
+            return;
+          }
+        }
         if (state.activeLayer === 'mouth' && !e.shiftKey) {
-          if (!state.mouthLayer.visible) state.mouthLayer.visible = true;
-          const curM = getActiveMouthState();
-          moveCamState = { mode: 'mouthScale', startStagePt: stagePt, startScale: curM.scale || 100 };
+          const ml = state.mouthLayer;
+          if (!ml.visible) ml.visible = true;
+          pushMouthTransformUndo(state.currentFrame, ml);
+          const curM = getActiveMouthState(ml);
+          moveCamState = { mode: 'mouthScale', startStagePt: stagePt, startScale: curM.scale || 100, mouthLayer: ml };
         } else {
           moveCamState = { mode: 'camScale', startStagePt: stagePt, startScale: cam.scale };
         }
       } else if (e.shiftKey) {
         moveCamState = { mode: 'camPan', startStagePt: stagePt, startX: cam.x, startY: cam.y };
-      } else if (state.activeLayer === 'mouth') {
-        if (!state.mouthLayer.visible) state.mouthLayer.visible = true;
-        const curM = getActiveMouthState();
-        moveCamState = {
-          mode: 'moveMouth',
-          startX: curM.x,
-          startY: curM.y,
-          startStagePt: stagePt,
-          totalScale: (cam.scale / 100) * getTotalViewScale(),
-        };
-      } else if (state.activeLayer === 'vector') {
-        const existed = Boolean(getVectorCelEntryAt(state.currentFrame));
-        const { cel } = ensureVectorCelAt(state.currentFrame, true);
-        pushVectorMoveUndo(cel, cel.offsetX, cel.offsetY);
-        moveCamState = {
-          mode: 'moveVector',
-          cel,
-          startOffsetX: cel.offsetX,
-          startOffsetY: cel.offsetY,
-          startStagePt: stagePt,
-          totalScale: (cam.scale / 100) * getTotalViewScale(),
-          moved: false,
-        };
-        if (!existed) renderTimeline();
       } else {
-        const { obj, created } = getTargetLayerForEdit(true, true);
-        if (!obj) return;
-        pushMoveUndo(obj, obj.offsetX, obj.offsetY);
-        moveCamState = {
-          mode: 'moveFrame',
-          cel: obj,
-          startOffsetX: obj.offsetX,
-          startOffsetY: obj.offsetY,
-          startStagePt: stagePt,
-          totalScale: (cam.scale / 100) * getTotalViewScale(),
-          moved: false,
-        };
-        if (created) renderTimeline();
+        // Check active layer's motion path handles before click-to-select layer switching
+        let activePathHit: MotionPathHit | null = null;
+        const curActiveKey = getLayerKeyForActive(target);
+        if (state.activeLayer === 'cel' || state.activeLayer === 'vector') {
+          const activeEntry: { start: number; cel: Cel | VectorCel } | null =
+            state.activeLayer === 'vector'
+              ? getVectorCelEntryAt(state.currentFrame)
+              : getCelEntryAt(state.currentFrame);
+          activePathHit = hitTestLayerMotionPath(rootSc, curActiveKey, activeEntry, worldPt, cam, getTotalViewScale());
+        }
+
+        if (!activePathHit) {
+          const hitKey = hitTestTopDrawableLayerAt(
+            rootSc,
+            target,
+            state.currentFrame,
+            stagePt,
+            cam,
+            getTotalViewScale(),
+            state.viewPanX,
+            state.viewPanY
+          );
+          if (hitKey && hitKey !== curActiveKey) {
+            selectLayerByKey(hitKey);
+          }
+        }
+
+        const activeKey = getLayerKeyForActive(target);
+        if (state.activeLayer === 'mouth') {
+          const ml = state.mouthLayer;
+          if (!ml.visible) ml.visible = true;
+          pushMouthTransformUndo(state.currentFrame, ml);
+          const curM = getActiveMouthState(ml);
+          const pMat = getParentWorldMatrix(rootSc, target, activeKey, state.currentFrame);
+          moveCamState = {
+            mode: 'moveMouth',
+            mouthLayer: ml,
+            startX: curM.x,
+            startY: curM.y,
+            startStagePt: stagePt,
+            totalScale,
+            parentMat: pMat,
+          };
+        } else if (state.activeLayer === 'vector') {
+          const curVecEntry = getVectorCelEntryAt(state.currentFrame);
+          const pathHit = hitTestLayerMotionPath(rootSc, activeKey, curVecEntry, worldPt, cam, getTotalViewScale());
+          const vecParentMat = getParentWorldMatrix(rootSc, target, activeKey, state.currentFrame);
+
+          if (pathHit?.kind === 'key' && curVecEntry?.cel.posKeys?.[pathHit.keyIndex]) {
+            const cel = curVecEntry.cel;
+            const k = cel.posKeys![pathHit.keyIndex];
+            pushTweenUndo(cel);
+            moveCamState = {
+              mode: 'moveTweenKey',
+              layerType: 'vector',
+              cel,
+              keyIndex: pathHit.keyIndex,
+              startKeyOffsetX: k.offsetX,
+              startKeyOffsetY: k.offsetY,
+              startStagePt: stagePt,
+              totalScale,
+              parentMat: vecParentMat,
+              moved: false,
+            };
+            stage.style.cursor = 'grabbing';
+            return;
+          }
+
+          if ((pathHit?.kind === 'curveHandle' || pathHit?.kind === 'segment') && curVecEntry?.cel.posKeys?.[pathHit.segIndex]) {
+            const cel = curVecEntry.cel;
+            const segA = cel.posKeys![pathHit.segIndex];
+            pushTweenUndo(cel);
+            moveCamState = {
+              mode: 'moveTweenCurve',
+              layerType: 'vector',
+              cel,
+              segIndex: pathHit.segIndex,
+              t: pathHit.t,
+              startCtrlDx: segA.ctrlDx ?? 0,
+              startCtrlDy: segA.ctrlDy ?? 0,
+              startStagePt: stagePt,
+              totalScale,
+              parentMat: vecParentMat,
+              moved: false,
+            };
+            stage.style.cursor = 'grabbing';
+            return;
+          }
+
+          const existed = Boolean(curVecEntry);
+          const entry = curVecEntry || ensureVectorCelAt(state.currentFrame, true);
+          const cel = entry.cel;
+          const relFrame = state.currentFrame - entry.start;
+          const hasTween = Boolean(cel.posKeys && cel.posKeys.length > 0);
+
+          if (hasTween || (cel.duration > 1 && relFrame > 0)) {
+            pushTweenUndo(cel);
+            if (!cel.posKeys || cel.posKeys.length === 0) {
+              cel.posKeys = [{ relFrame: 0, offsetX: cel.offsetX, offsetY: cel.offsetY }];
+            }
+            let key = cel.posKeys.find((k) => k.relFrame === relFrame);
+            if (!key) {
+              const curOff = getCelOffsetAtFrame(cel, entry.start, state.currentFrame);
+              key = {
+                relFrame,
+                offsetX: Math.round(curOff.offsetX),
+                offsetY: Math.round(curOff.offsetY),
+              };
+              cel.posKeys.push(key);
+              sortPosKeys(cel);
+            }
+            const keyIndex = cel.posKeys.indexOf(key);
+            moveCamState = {
+              mode: 'moveTweenKey',
+              layerType: 'vector',
+              cel,
+              keyIndex,
+              startKeyOffsetX: key.offsetX,
+              startKeyOffsetY: key.offsetY,
+              startStagePt: stagePt,
+              totalScale,
+              parentMat: vecParentMat,
+              moved: false,
+            };
+            if (!existed) renderTimeline();
+          } else {
+            pushVectorMoveUndo(cel, cel.offsetX, cel.offsetY);
+            moveCamState = {
+              mode: 'moveVector',
+              cel,
+              startOffsetX: cel.offsetX,
+              startOffsetY: cel.offsetY,
+              startStagePt: stagePt,
+              totalScale,
+              parentMat: vecParentMat,
+              moved: false,
+            };
+            if (!existed) renderTimeline();
+          }
+        } else if (state.activeLayer === 'bg') {
+          const { obj } = getTargetLayerForEdit(true, true);
+          if (!obj) return;
+          pushMoveUndo(obj, obj.offsetX, obj.offsetY);
+          const pMat = getParentWorldMatrix(rootSc, target, activeKey, state.currentFrame);
+          moveCamState = {
+            mode: 'moveFrame',
+            cel: obj,
+            startOffsetX: obj.offsetX,
+            startOffsetY: obj.offsetY,
+            startStagePt: stagePt,
+            totalScale,
+            parentMat: pMat,
+            moved: false,
+          };
+        } else {
+          const curEntry = getCelEntryAt(state.currentFrame);
+          const pathHit = hitTestLayerMotionPath(rootSc, activeKey, curEntry, worldPt, cam, getTotalViewScale());
+          const celParentMat = getParentWorldMatrix(rootSc, target, activeKey, state.currentFrame);
+
+          if (pathHit?.kind === 'key' && curEntry?.cel.posKeys?.[pathHit.keyIndex]) {
+            const cel = curEntry.cel;
+            const k = cel.posKeys![pathHit.keyIndex];
+            pushTweenUndo(cel);
+            moveCamState = {
+              mode: 'moveTweenKey',
+              layerType: 'cel',
+              cel,
+              keyIndex: pathHit.keyIndex,
+              startKeyOffsetX: k.offsetX,
+              startKeyOffsetY: k.offsetY,
+              startStagePt: stagePt,
+              totalScale,
+              parentMat: celParentMat,
+              moved: false,
+            };
+            stage.style.cursor = 'grabbing';
+            return;
+          }
+
+          if ((pathHit?.kind === 'curveHandle' || pathHit?.kind === 'segment') && curEntry?.cel.posKeys?.[pathHit.segIndex]) {
+            const cel = curEntry.cel;
+            const segA = cel.posKeys![pathHit.segIndex];
+            pushTweenUndo(cel);
+            moveCamState = {
+              mode: 'moveTweenCurve',
+              layerType: 'cel',
+              cel,
+              segIndex: pathHit.segIndex,
+              t: pathHit.t,
+              startCtrlDx: segA.ctrlDx ?? 0,
+              startCtrlDy: segA.ctrlDy ?? 0,
+              startStagePt: stagePt,
+              totalScale,
+              parentMat: celParentMat,
+              moved: false,
+            };
+            stage.style.cursor = 'grabbing';
+            return;
+          }
+
+          const existed = Boolean(curEntry);
+          const entry = curEntry || ensureCelAt(state.currentFrame, true);
+          const cel = entry.cel;
+          const relFrame = state.currentFrame - entry.start;
+          const hasTween = Boolean(cel.posKeys && cel.posKeys.length > 0);
+
+          if (hasTween || (cel.duration > 1 && relFrame > 0)) {
+            pushTweenUndo(cel);
+            if (!cel.posKeys || cel.posKeys.length === 0) {
+              cel.posKeys = [{ relFrame: 0, offsetX: cel.offsetX, offsetY: cel.offsetY }];
+            }
+            let key = cel.posKeys.find((k) => k.relFrame === relFrame);
+            if (!key) {
+              const curOff = getCelOffsetAtFrame(cel, entry.start, state.currentFrame);
+              key = {
+                relFrame,
+                offsetX: Math.round(curOff.offsetX),
+                offsetY: Math.round(curOff.offsetY),
+              };
+              cel.posKeys.push(key);
+              sortPosKeys(cel);
+            }
+            const keyIndex = cel.posKeys.indexOf(key);
+            moveCamState = {
+              mode: 'moveTweenKey',
+              layerType: 'cel',
+              cel,
+              keyIndex,
+              startKeyOffsetX: key.offsetX,
+              startKeyOffsetY: key.offsetY,
+              startStagePt: stagePt,
+              totalScale,
+              parentMat: celParentMat,
+              moved: false,
+            };
+            if (!existed) renderTimeline();
+          } else {
+            pushMoveUndo(cel, cel.offsetX, cel.offsetY);
+            moveCamState = {
+              mode: 'moveFrame',
+              cel,
+              startOffsetX: cel.offsetX,
+              startOffsetY: cel.offsetY,
+              startStagePt: stagePt,
+              totalScale,
+              parentMat: celParentMat,
+              moved: false,
+            };
+            if (!existed) renderTimeline();
+          }
+        }
       }
+      renderStage();
       return;
     }
 
@@ -3102,13 +5588,17 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const worldPt = stageToWorld(stagePt, cam);
 
     if (state.activeLayer === 'mouth') {
-      if (!state.mouthLayer.visible) state.mouthLayer.visible = true;
-      const mouthEval = getActiveMouthState();
-      const vis = state.mouthLayer.visemes[mouthEval.viseme];
-      const mp = worldToVisemeLocal(worldPt, mouthEval);
+      const ml = state.mouthLayer;
+      if (!ml.visible) ml.visible = true;
+      const mouthEval = getActiveMouthState(ml);
+      const vis = ml.visemes[mouthEval.viseme];
+      const pLocalPt = worldToTargetParentLocal(rootSc, target, `mouth:${ml.id}`, state.currentFrame, worldPt);
+      const mp = worldToVisemeLocal(pLocalPt, mouthEval);
 
       if (state.tool === 'fill' && !rightErase) {
-        floodFillLayer(vis, mp.x, mp.y, state.brushColor, false, true);
+        if (floodFillLayer(vis, mp.x, mp.y, state.brushColor, false, true)) {
+          pushMouthVisemeUndo(mouthEval.viseme, ml);
+        }
         updateMouthWidget();
         renderStage();
         return;
@@ -3119,6 +5609,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       activeDrawVector = null;
       activeDrawIsMouth = true;
       pushPixelUndo(vis, true);
+      pushMouthVisemeUndo(mouthEval.viseme, ml);
       const vctx = vis.canvas.getContext('2d');
       if (vctx) {
         vctx.imageSmoothingEnabled = false;
@@ -3133,6 +5624,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (state.activeLayer === 'vector') {
       activeDrawIsMouth = false;
       activeDrawTarget = null;
+      const activeTrackId = state.activeVectorTrack.id;
+      const vectorLayerKey = `vector:${activeTrackId}`;
+      const pLocalPt = worldToTargetParentLocal(rootSc, target, vectorLayerKey, state.currentFrame, worldPt);
       const curVecEntry = getVectorCelEntryAt(state.currentFrame);
       if (curVecEntry?.cel.nestId) {
         isPointerDown = false;
@@ -3140,19 +5634,22 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         onNotify('Nested clip — right-click frame (or double-click) to edit inside nest, or use Move tool.');
         return;
       }
-      if (!state.showVectorLayer) {
-        state.showVectorLayer = true;
-        mustEl<HTMLButtonElement>('btnVisVector').style.opacity = '1';
+      if (!state.showVectorLayer) state.showVectorLayer = true;
+      if (!state.activeVectorTrack.visible) {
+        state.activeVectorTrack.visible = true;
+        renderTimeline();
       }
 
       if (state.tool === 'nudge' && !rightErase) {
         const activeEntry = getVectorCelEntryAt(state.currentFrame);
         if (!activeEntry || activeEntry.cel.items.length === 0) return;
         const existed = Boolean(getVectorCelEntryAt(state.currentFrame));
-        const { cel } = ensureVectorCelAt(state.currentFrame, true);
+        const { start, cel } = ensureVectorCelAt(state.currentFrame, true);
         pushVectorItemsUndo(cel);
 
-        const localPt = { x: worldPt.x - cel.offsetX, y: worldPt.y - cel.offsetY };
+        const vOff = getCelOffsetAtFrame(cel, start, state.currentFrame);
+        const piv = cel.rotation ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
+        const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0);
         const r = state.nudgeRadius;
         const targets: Array<{ pt: Point2D; origX: number; origY: number; weight: number }> = [];
 
@@ -3186,7 +5683,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           return;
         }
 
-        activeNudgeState = { cel, startLocalPt: localPt, radius: r, targets, moved: false };
+        activeNudgeState = { cel, trackId: activeTrackId, startLocalPt: localPt, radius: r, targets, moved: false };
         if (!existed) renderTimeline();
         renderStage();
         return;
@@ -3194,10 +5691,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
       if (state.tool === 'fill') {
         const existed = Boolean(getVectorCelEntryAt(state.currentFrame));
-        const { cel } = ensureVectorCelAt(state.currentFrame, rightErase);
-        const vecFilled = tryVectorStrokeFill(cel, worldPt.x, worldPt.y, state.brushColor, rightErase);
+        const { start, cel } = ensureVectorCelAt(state.currentFrame, rightErase);
+        const vOff = getCelOffsetAtFrame(cel, start, state.currentFrame);
+        const vecFilled = tryVectorStrokeFill(cel, pLocalPt.x, pLocalPt.y, state.brushColor, rightErase, vOff.offsetX, vOff.offsetY);
         if (!vecFilled) {
-          floodFillVectorCel(cel, worldPt.x, worldPt.y, state.brushColor, rightErase);
+          floodFillVectorCel(cel, pLocalPt.x, pLocalPt.y, state.brushColor, rightErase, vOff.offsetX, vOff.offsetY);
         }
         if (!existed || vecFilled || cel.items.length > 0) renderTimeline();
         renderStage();
@@ -3206,9 +5704,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
       const eraseMode = rightErase || state.tool === 'eraser';
       const existed = Boolean(getVectorCelEntryAt(state.currentFrame));
-      const { cel } = ensureVectorCelAt(state.currentFrame, eraseMode);
+      const { start, cel } = ensureVectorCelAt(state.currentFrame, eraseMode);
       pushVectorItemsUndo(cel);
-      const localPt = { x: worldPt.x - cel.offsetX, y: worldPt.y - cel.offsetY };
+      const vOff = getCelOffsetAtFrame(cel, start, state.currentFrame);
+      const piv = cel.rotation ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
+      const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0);
       const item: VectorStrokeItem | VectorEraseItem = eraseMode
         ? { kind: 'erase', points: [localPt], size: state.brushSize }
         : { kind: 'stroke', points: [localPt], color: state.brushColor, size: state.brushSize };
@@ -3231,7 +5731,15 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         onNotify('Nested clip — right-click frame (or double-click) to edit inside nest, or use Move tool.');
         return;
       }
+      if (!state.activeCelTrack.visible) {
+        state.activeCelTrack.visible = true;
+        renderTimeline();
+      }
     }
+    const layerType: 'cel' | 'bg' = state.activeLayer === 'bg' ? 'bg' : 'cel';
+    const editLayerKey = getLayerKeyForActive(target);
+    const pLocalPt = worldToTargetParentLocal(rootSc, target, editLayerKey, state.currentFrame, worldPt);
+
     if (state.activeLayer === 'cel' && state.tool === 'nudge' && !rightErase) {
       const activeEntry = getCelEntryAt(state.currentFrame);
       if (!activeEntry || !activeEntry.cel.hasInk) return;
@@ -3244,11 +5752,13 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const h = cel.canvas.height;
       const imgData = cctx.getImageData(0, 0, w, h);
       const pixels32 = new Uint32Array(imgData.data.buffer);
+      const celOff = getCelOffsetAtFrame(cel, activeEntry.start, state.currentFrame);
+      const piv = cel.rotation ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
       activeBitmapNudgeState = {
         cel,
         imgData,
         pixels32,
-        lastLocalPt: { x: worldPt.x - cel.offsetX, y: worldPt.y - cel.offsetY },
+        lastLocalPt: worldToLayerLocal(pLocalPt, celOff.offsetX, celOff.offsetY, piv.ox, piv.oy, cel.rotation || 0),
         accX: 0,
         accY: 0,
         radius: state.nudgeRadius,
@@ -3261,7 +5771,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (state.tool === 'fill' && !rightErase) {
       const { obj, created } = getTargetLayerForEdit(true, false);
       if (obj) {
-        floodFillLayer(obj, worldPt.x - obj.offsetX, worldPt.y - obj.offsetY, state.brushColor, false, false);
+        const curCelEntry = layerType === 'cel' ? getCelEntryAt(state.currentFrame) : null;
+        const off = curCelEntry ? getCelOffsetAtFrame(curCelEntry.cel, curCelEntry.start, state.currentFrame) : { offsetX: obj.offsetX, offsetY: obj.offsetY };
+        const piv = obj.rotation ? getLayerPivotLocal(rootSc, layerType, obj) : { ox: 0, oy: 0 };
+        const lp = worldToLayerLocal(pLocalPt, off.offsetX, off.offsetY, piv.ox, piv.oy, obj.rotation || 0);
+        floodFillLayer(obj, lp.x, lp.y, state.brushColor, false, false);
       }
       if (created) renderTimeline();
       updateBgUI();
@@ -3279,14 +5793,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const cctx = activeDrawTarget.canvas.getContext('2d');
     if (cctx) {
       cctx.imageSmoothingEnabled = false;
-      drawPixelDisk(
-        cctx,
-        worldPt.x - obj.offsetX,
-        worldPt.y - obj.offsetY,
-        state.brushSize,
-        state.brushColor,
-        eraseMode
-      );
+      const curCelEntry = layerType === 'cel' ? getCelEntryAt(state.currentFrame) : null;
+      const off = curCelEntry ? getCelOffsetAtFrame(curCelEntry.cel, curCelEntry.start, state.currentFrame) : { offsetX: obj.offsetX, offsetY: obj.offsetY };
+      const piv = obj.rotation ? getLayerPivotLocal(rootSc, layerType, obj) : { ox: 0, oy: 0 };
+      const lp = worldToLayerLocal(pLocalPt, off.offsetX, off.offsetY, piv.ox, piv.oy, obj.rotation || 0);
+      drawPixelDisk(cctx, lp.x, lp.y, state.brushSize, state.brushColor, eraseMode);
     }
     obj.hasInk = true;
     lastWorldPt = worldPt;
@@ -3302,11 +5813,51 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     hoverStagePt = stagePt;
 
     if (!isPointerDown) {
-      if (
+      if (state.tool === 'moveCam' && !state.isPlaying) {
+        const cam = getEvaluatedCamera(state.currentFrame);
+        const worldPt = stageToWorld(stagePt, cam);
+        const inv = 1 / (getTotalViewScale() * (cam.scale / 100));
+        const gizmo = getActiveLayerGizmoInfo(activeScene(), state.currentFrame, inv);
+        let nextGizmoHit: 'origin' | 'rotateHandle' | null = null;
+        if (gizmo) {
+          if (Math.hypot(worldPt.x - gizmo.worldOx, worldPt.y - gizmo.worldOy) <= 18 * inv) {
+            nextGizmoHit = 'origin';
+          } else if (Math.hypot(worldPt.x - gizmo.handleX, worldPt.y - gizmo.handleY) <= 12 * inv) {
+            nextGizmoHit = 'rotateHandle';
+          }
+        }
+        const gizmoChanged = nextGizmoHit !== hoverOriginGizmoPart;
+        hoverOriginGizmoPart = nextGizmoHit;
+
+        if (state.activeLayer === 'cel' || state.activeLayer === 'vector') {
+          const entry: { start: number; cel: Cel | VectorCel } | null =
+            state.activeLayer === 'vector'
+              ? getVectorCelEntryAt(state.currentFrame)
+              : getCelEntryAt(state.currentFrame);
+          const nextHit = nextGizmoHit
+            ? null
+            : hitTestLayerMotionPath(activeScene(), getLayerKeyForActive(activeTimelineTarget()), entry, worldPt, cam, getTotalViewScale());
+          stage.style.cursor = nextGizmoHit ? 'grab' : nextHit ? (nextHit.kind === 'key' ? 'grab' : 'pointer') : 'move';
+          const changed =
+            nextHit?.kind !== hoverMotionHit?.kind ||
+            (nextHit?.kind === 'key' && hoverMotionHit?.kind === 'key' && nextHit.keyIndex !== hoverMotionHit.keyIndex) ||
+            ((nextHit?.kind === 'curveHandle' || nextHit?.kind === 'segment') &&
+              (hoverMotionHit?.kind === 'curveHandle' || hoverMotionHit?.kind === 'segment') &&
+              nextHit.segIndex !== hoverMotionHit.segIndex);
+          if (changed || gizmoChanged) {
+            hoverMotionHit = nextHit;
+            renderStage();
+          }
+        } else {
+          stage.style.cursor = nextGizmoHit ? 'grab' : 'move';
+          if (gizmoChanged) renderStage();
+        }
+      } else if (
         state.tool === 'brush' ||
         state.tool === 'eraser' ||
         (state.tool === 'nudge' && (state.activeLayer === 'vector' || state.activeLayer === 'cel'))
       ) {
+        if (hoverOriginGizmoPart !== null) hoverOriginGizmoPart = null;
         renderStage();
       }
       return;
@@ -3315,10 +5866,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (activeNudgeState) {
       const cam = getEvaluatedCamera(state.currentFrame);
       const worldPt = stageToWorld(stagePt, cam);
-      const localPt = {
-        x: worldPt.x - activeNudgeState.cel.offsetX,
-        y: worldPt.y - activeNudgeState.cel.offsetY,
-      };
+      const rootSc = activeScene();
+      const target = activeTimelineTarget();
+      const cel = activeNudgeState.cel;
+      const curEntry = getVectorCelEntryAt(state.currentFrame);
+      const vOff = curEntry && curEntry.cel === cel ? getCelOffsetAtFrame(cel, curEntry.start, state.currentFrame) : { offsetX: cel.offsetX, offsetY: cel.offsetY };
+      const pLocalPt = worldToTargetParentLocal(rootSc, target, `vector:${activeNudgeState.trackId}`, state.currentFrame, worldPt);
+      const piv = cel.rotation ? getLayerPivotLocal(rootSc, 'vector', cel) : { ox: 0, oy: 0 };
+      const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, cel.rotation || 0);
       const dx = localPt.x - activeNudgeState.startLocalPt.x;
       const dy = localPt.y - activeNudgeState.startLocalPt.y;
       if (Math.hypot(dx, dy) > 0.15) activeNudgeState.moved = true;
@@ -3333,8 +5888,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (activeBitmapNudgeState) {
       const cam = getEvaluatedCamera(state.currentFrame);
       const worldPt = stageToWorld(stagePt, cam);
+      const rootSc = activeScene();
+      const target = activeTimelineTarget();
       const { cel, imgData, pixels32, radius } = activeBitmapNudgeState;
-      const curLocalPt = { x: worldPt.x - cel.offsetX, y: worldPt.y - cel.offsetY };
+      const curEntry = getCelEntryAt(state.currentFrame);
+      const celOff = curEntry && curEntry.cel === cel ? getCelOffsetAtFrame(cel, curEntry.start, state.currentFrame) : { offsetX: cel.offsetX, offsetY: cel.offsetY };
+      const pLocalPt = worldToTargetParentLocal(rootSc, target, getLayerKeyForActive(target), state.currentFrame, worldPt);
+      const piv = cel.rotation ? getLayerPivotLocal(rootSc, 'cel', cel) : { ox: 0, oy: 0 };
+      const curLocalPt = worldToLayerLocal(pLocalPt, celOff.offsetX, celOff.offsetY, piv.ox, piv.oy, cel.rotation || 0);
       const dx = curLocalPt.x - activeBitmapNudgeState.lastLocalPt.x;
       const dy = curLocalPt.y - activeBitmapNudgeState.lastLocalPt.y;
       const dist = Math.hypot(dx, dy);
@@ -3421,6 +5982,69 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     }
 
     if (state.tool === 'moveCam' && moveCamState) {
+      if (moveCamState.mode === 'moveOrigin') {
+        const cam = getEvaluatedCamera(state.currentFrame);
+        const worldPt = stageToWorld(stagePt, cam);
+        const dwx = worldPt.x - moveCamState.startWorldPt.x;
+        const dwy = worldPt.y - moveCamState.startWorldPt.y;
+        if (Math.hypot(dwx, dwy) > 0.25) moveCamState.moved = true;
+        const pDelta = isIdentityMat(moveCamState.parentMat)
+          ? { x: dwx, y: dwy }
+          : applyMatVec(invMat(moveCamState.parentMat), dwx, dwy);
+
+        if (moveCamState.layer === 'mouth') {
+          const ml = moveCamState.mouthLayer || state.mouthLayer;
+          const curM = getActiveMouthState(ml);
+          const copy = { ...curM };
+          const mRot = curM.rotation || 0;
+          const mc = mRot ? Math.cos(-mRot) : 1;
+          const ms = mRot ? Math.sin(-mRot) : 0;
+          const mlDx = pDelta.x * mc - pDelta.y * ms;
+          const mlDy = pDelta.x * ms + pDelta.y * mc;
+          applyMouthOriginChange(copy, Math.round(moveCamState.startOx + mlDx), Math.round(moveCamState.startOy + mlDy));
+          setMouthKeyAtCurrentFrame({ x: copy.x, y: copy.y, originDx: copy.originDx, originDy: copy.originDy }, state.currentFrame, ml);
+        } else if (moveCamState.targetObj) {
+          const obj = moveCamState.targetObj;
+          const oldOx = typeof obj.originX === 'number' ? obj.originX : moveCamState.startOx;
+          const oldOy = typeof obj.originY === 'number' ? obj.originY : moveCamState.startOy;
+          const rot = obj.rotation || 0;
+          const c = rot ? Math.cos(-rot) : 1;
+          const s = rot ? Math.sin(-rot) : 0;
+          const dlx = pDelta.x * c - pDelta.y * s;
+          const dly = pDelta.x * s + pDelta.y * c;
+          const newOx = Math.round((moveCamState.startOx + dlx) * 10) / 10;
+          const newOy = Math.round((moveCamState.startOy + dly) * 10) / 10;
+          applyLayerOriginChange(moveCamState.layer, obj, oldOx, oldOy, newOx, newOy);
+        }
+        renderStage();
+        return;
+      }
+
+      if (moveCamState.mode === 'rotateLayer') {
+        const cam = getEvaluatedCamera(state.currentFrame);
+        const worldPt = stageToWorld(stagePt, cam);
+        const ang = Math.atan2(worldPt.y - moveCamState.pivotWorldY, worldPt.x - moveCamState.pivotWorldX);
+        let deltaAng = ang - moveCamState.startAngle;
+        while (deltaAng > Math.PI) deltaAng -= Math.PI * 2;
+        while (deltaAng < -Math.PI) deltaAng += Math.PI * 2;
+        let nextRot = moveCamState.startRotation + deltaAng;
+        if (e.shiftKey) {
+          const snapRad = (15 * Math.PI) / 180;
+          const snappedWorldRot = Math.round((moveCamState.parentRot + nextRot) / snapRad) * snapRad;
+          nextRot = snappedWorldRot - moveCamState.parentRot;
+        }
+        if (Math.abs(deltaAng) > 0.002) moveCamState.moved = true;
+
+        if (moveCamState.layer === 'mouth') {
+          setMouthKeyAtCurrentFrame({ rotation: nextRot }, state.currentFrame, moveCamState.mouthLayer || state.mouthLayer);
+        } else if (moveCamState.targetObj) {
+          moveCamState.targetObj.rotation = nextRot;
+        }
+        updateStageBadge();
+        renderStage();
+        return;
+      }
+
       const dx = stagePt.x - moveCamState.startStagePt.x;
       const dy = stagePt.y - moveCamState.startStagePt.y;
 
@@ -3442,35 +6066,102 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       } else if (moveCamState.mode === 'mouthScale') {
         const deltaScale = (dx - dy) * 0.55;
         const nextScale = Math.round(Math.max(20, Math.min(500, moveCamState.startScale + deltaScale)));
-        setMouthKeyAtCurrentFrame({ scale: nextScale });
+        setMouthKeyAtCurrentFrame({ scale: nextScale }, state.currentFrame, moveCamState.mouthLayer);
         updateMouthWidget();
         updateStageBadge();
         renderTimeline();
         renderStage();
       } else if (moveCamState.mode === 'moveMouth') {
-        const dxWorld = Math.round(dx / moveCamState.totalScale);
-        const dyWorld = Math.round(dy / moveCamState.totalScale);
-        setMouthKeyAtCurrentFrame({
-          x: moveCamState.startX + dxWorld,
-          y: moveCamState.startY + dyWorld,
-        });
+        const dWorldX = dx / moveCamState.totalScale;
+        const dWorldY = dy / moveCamState.totalScale;
+        const localD = isIdentityMat(moveCamState.parentMat)
+          ? { x: dWorldX, y: dWorldY }
+          : applyMatVec(invMat(moveCamState.parentMat), dWorldX, dWorldY);
+        setMouthKeyAtCurrentFrame(
+          {
+            x: Math.round(moveCamState.startX + localD.x),
+            y: Math.round(moveCamState.startY + localD.y),
+          },
+          state.currentFrame,
+          moveCamState.mouthLayer
+        );
         renderTimeline();
         renderStage();
       } else if (moveCamState.mode === 'moveVector') {
-        const dxWorld = Math.round(dx / moveCamState.totalScale);
-        const dyWorld = Math.round(dy / moveCamState.totalScale);
-        if (dxWorld !== 0 || dyWorld !== 0) moveCamState.moved = true;
+        const dWorldX = dx / moveCamState.totalScale;
+        const dWorldY = dy / moveCamState.totalScale;
+        const localD = isIdentityMat(moveCamState.parentMat)
+          ? { x: dWorldX, y: dWorldY }
+          : applyMatVec(invMat(moveCamState.parentMat), dWorldX, dWorldY);
+        const ldx = Math.round(localD.x);
+        const ldy = Math.round(localD.y);
+        if (ldx !== 0 || ldy !== 0) moveCamState.moved = true;
 
-        moveCamState.cel.offsetX = moveCamState.startOffsetX + dxWorld;
-        moveCamState.cel.offsetY = moveCamState.startOffsetY + dyWorld;
+        moveCamState.cel.offsetX = moveCamState.startOffsetX + ldx;
+        moveCamState.cel.offsetY = moveCamState.startOffsetY + ldy;
         renderStage();
       } else if (moveCamState.mode === 'moveFrame') {
-        const dxWorld = Math.round(dx / moveCamState.totalScale);
-        const dyWorld = Math.round(dy / moveCamState.totalScale);
-        if (dxWorld !== 0 || dyWorld !== 0) moveCamState.moved = true;
+        const dWorldX = dx / moveCamState.totalScale;
+        const dWorldY = dy / moveCamState.totalScale;
+        const localD = isIdentityMat(moveCamState.parentMat)
+          ? { x: dWorldX, y: dWorldY }
+          : applyMatVec(invMat(moveCamState.parentMat), dWorldX, dWorldY);
+        const ldx = Math.round(localD.x);
+        const ldy = Math.round(localD.y);
+        if (ldx !== 0 || ldy !== 0) moveCamState.moved = true;
 
-        moveCamState.cel.offsetX = moveCamState.startOffsetX + dxWorld;
-        moveCamState.cel.offsetY = moveCamState.startOffsetY + dyWorld;
+        moveCamState.cel.offsetX = moveCamState.startOffsetX + ldx;
+        moveCamState.cel.offsetY = moveCamState.startOffsetY + ldy;
+        renderStage();
+      } else if (moveCamState.mode === 'moveTweenKey') {
+        const dWorldX = dx / moveCamState.totalScale;
+        const dWorldY = dy / moveCamState.totalScale;
+        const localD = isIdentityMat(moveCamState.parentMat)
+          ? { x: dWorldX, y: dWorldY }
+          : applyMatVec(invMat(moveCamState.parentMat), dWorldX, dWorldY);
+        const ldx = Math.round(localD.x);
+        const ldy = Math.round(localD.y);
+        if (ldx !== 0 || ldy !== 0) moveCamState.moved = true;
+        const keys = moveCamState.cel.posKeys;
+        if (keys && keys[moveCamState.keyIndex]) {
+          const k = keys[moveCamState.keyIndex];
+          k.offsetX = moveCamState.startKeyOffsetX + ldx;
+          k.offsetY = moveCamState.startKeyOffsetY + ldy;
+          if (k.relFrame === 0) {
+            moveCamState.cel.offsetX = k.offsetX;
+            moveCamState.cel.offsetY = k.offsetY;
+          }
+        }
+        renderStage();
+      } else if (moveCamState.mode === 'moveTweenCurve') {
+        const dWorldX = dx / moveCamState.totalScale;
+        const dWorldY = dy / moveCamState.totalScale;
+        const localD = isIdentityMat(moveCamState.parentMat)
+          ? { x: dWorldX, y: dWorldY }
+          : applyMatVec(invMat(moveCamState.parentMat), dWorldX, dWorldY);
+        if (Math.hypot(localD.x, localD.y) > 0.25) moveCamState.moved = true;
+        const keys = moveCamState.cel.posKeys;
+        if (keys && keys[moveCamState.segIndex] && keys[moveCamState.segIndex + 1]) {
+          const a = keys[moveCamState.segIndex];
+          const b = keys[moveCamState.segIndex + 1];
+          const t = moveCamState.t;
+          const u = 1 - t;
+          const denom = 2 * u * t;
+          if (denom > 0.02) {
+            const mx = (a.offsetX + b.offsetX) * 0.5;
+            const my = (a.offsetY + b.offsetY) * 0.5;
+            const initCx = mx + moveCamState.startCtrlDx;
+            const initCy = my + moveCamState.startCtrlDy;
+            const initPx = u * u * a.offsetX + 2 * u * t * initCx + t * t * b.offsetX;
+            const initPy = u * u * a.offsetY + 2 * u * t * initCy + t * t * b.offsetY;
+            const targetX = initPx + localD.x;
+            const targetY = initPy + localD.y;
+            const nextCx = (targetX - u * u * a.offsetX - t * t * b.offsetX) / denom;
+            const nextCy = (targetY - u * u * a.offsetY - t * t * b.offsetY) / denom;
+            a.ctrlDx = Math.round((nextCx - mx) * 10) / 10;
+            a.ctrlDy = Math.round((nextCy - my) * 10) / 10;
+          }
+        }
         renderStage();
       }
       return;
@@ -3479,7 +6170,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (activeDrawVector && (isRightErasing || state.tool === 'brush' || state.tool === 'eraser')) {
       const cam = getEvaluatedCamera(state.currentFrame);
       const worldPt = stageToWorld(stagePt, cam);
-      const localPt = { x: worldPt.x - activeDrawVector.cel.offsetX, y: worldPt.y - activeDrawVector.cel.offsetY };
+      const rootSc = activeScene();
+      const target = activeTimelineTarget();
+      const vCel = activeDrawVector.cel;
+      const curVec = getVectorCelEntryAt(state.currentFrame);
+      const vOff = curVec && curVec.cel === vCel ? getCelOffsetAtFrame(vCel, curVec.start, state.currentFrame) : { offsetX: vCel.offsetX, offsetY: vCel.offsetY };
+      const pLocalPt = worldToTargetParentLocal(rootSc, target, `vector:${state.activeVectorTrack.id}`, state.currentFrame, worldPt);
+      const piv = vCel.rotation ? getLayerPivotLocal(rootSc, 'vector', vCel) : { ox: 0, oy: 0 };
+      const localPt = worldToLayerLocal(pLocalPt, vOff.offsetX, vOff.offsetY, piv.ox, piv.oy, vCel.rotation || 0);
       const pts = activeDrawVector.item.points;
       const prev = pts[pts.length - 1];
       if (!prev || Math.hypot(localPt.x - prev.x, localPt.y - prev.y) >= 0.4) {
@@ -3494,24 +6192,50 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const eraseMode = isRightErasing || state.tool === 'eraser';
       const cam = getEvaluatedCamera(state.currentFrame);
       const worldPt = stageToWorld(stagePt, cam);
+      const rootSc = activeScene();
+      const target = activeTimelineTarget();
       const cctx = activeDrawTarget.canvas.getContext('2d');
       if (cctx) {
         cctx.imageSmoothingEnabled = false;
         if (activeDrawIsMouth) {
-          const mouthEval = getActiveMouthState();
-          const p1 = worldToVisemeLocal(lastWorldPt, mouthEval);
-          const p2 = worldToVisemeLocal(worldPt, mouthEval);
+          const ml = state.mouthLayer;
+          const mouthEval = getActiveMouthState(ml);
+          const mKey = `mouth:${ml.id}`;
+          const pLast = worldToTargetParentLocal(rootSc, target, mKey, state.currentFrame, lastWorldPt);
+          const pCur = worldToTargetParentLocal(rootSc, target, mKey, state.currentFrame, worldPt);
+          const p1 = worldToVisemeLocal(pLast, mouthEval);
+          const p2 = worldToVisemeLocal(pCur, mouthEval);
           drawPixelLine(cctx, p1, p2, state.brushSize, state.brushColor, eraseMode);
           updateMouthWidget();
         } else if ('offsetX' in activeDrawTarget) {
-          drawPixelLine(
-            cctx,
-            { x: lastWorldPt.x - activeDrawTarget.offsetX, y: lastWorldPt.y - activeDrawTarget.offsetY },
-            { x: worldPt.x - activeDrawTarget.offsetX, y: worldPt.y - activeDrawTarget.offsetY },
-            state.brushSize,
-            state.brushColor,
-            eraseMode
+          const layerType: 'cel' | 'bg' = state.activeLayer === 'bg' ? 'bg' : 'cel';
+          const drawKey = getLayerKeyForActive(target);
+          const curCel = layerType === 'cel' ? getCelEntryAt(state.currentFrame) : null;
+          const off = curCel && curCel.cel === activeDrawTarget
+            ? getCelOffsetAtFrame(curCel.cel, curCel.start, state.currentFrame)
+            : { offsetX: activeDrawTarget.offsetX, offsetY: activeDrawTarget.offsetY };
+          const pLast = worldToTargetParentLocal(rootSc, target, drawKey, state.currentFrame, lastWorldPt);
+          const pCur = worldToTargetParentLocal(rootSc, target, drawKey, state.currentFrame, worldPt);
+          const piv = activeDrawTarget.rotation
+            ? getLayerPivotLocal(rootSc, layerType, activeDrawTarget)
+            : { ox: 0, oy: 0 };
+          const p1 = worldToLayerLocal(
+            pLast,
+            off.offsetX,
+            off.offsetY,
+            piv.ox,
+            piv.oy,
+            activeDrawTarget.rotation || 0
           );
+          const p2 = worldToLayerLocal(
+            pCur,
+            off.offsetX,
+            off.offsetY,
+            piv.ox,
+            piv.oy,
+            activeDrawTarget.rotation || 0
+          );
+          drawPixelLine(cctx, p1, p2, state.brushSize, state.brushColor, eraseMode);
           activeDrawTarget.hasInk = true;
         }
       }
@@ -3528,6 +6252,26 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (moveCamState && (moveCamState.mode === 'moveFrame' || moveCamState.mode === 'moveVector') && !moveCamState.moved) {
       moveCamState.cel.undoStack.pop();
     }
+    if (moveCamState && (moveCamState.mode === 'moveOrigin' || moveCamState.mode === 'rotateLayer') && !moveCamState.moved) {
+      if (moveCamState.layer === 'mouth') {
+        mouthUndoStacks.get(moveCamState.mouthLayer || state.mouthLayer)?.pop();
+      } else if (moveCamState.targetObj) {
+        moveCamState.targetObj.undoStack.pop();
+      }
+    }
+    let updatedTween = false;
+    if (moveCamState && (moveCamState.mode === 'moveTweenKey' || moveCamState.mode === 'moveTweenCurve')) {
+      if (!moveCamState.moved) {
+        const undone = moveCamState.cel.undoStack.pop();
+        if (undone && undone.type === 'tween') {
+          moveCamState.cel.offsetX = undone.offsetX;
+          moveCamState.cel.offsetY = undone.offsetY;
+          moveCamState.cel.posKeys = clonePosKeys(undone.posKeys);
+        }
+      } else {
+        updatedTween = true;
+      }
+    }
     if (activeNudgeState && !activeNudgeState.moved) {
       activeNudgeState.cel.undoStack.pop();
     }
@@ -3543,12 +6287,111 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     activeNudgeState = null;
     activeBitmapNudgeState = null;
     moveCamState = null;
-    if (finishedVector) renderTimeline();
+    stage.style.cursor = state.tool === 'moveCam' ? 'move' : 'crosshair';
+    if (finishedVector || updatedTween) renderTimeline();
     renderStage();
+  });
+
+  stage.addEventListener('dblclick', (e) => {
+    if (state.isPlaying) return;
+    const stagePt = getStageCoords(e);
+    const cam = getEvaluatedCamera(state.currentFrame);
+    const worldPt = stageToWorld(stagePt, cam);
+    const inv = 1 / (getTotalViewScale() * (cam.scale / 100));
+
+    if (state.tool === 'moveCam') {
+      const rootSc = activeScene();
+      const gizmo = getActiveLayerGizmoInfo(rootSc, state.currentFrame, inv);
+      if (gizmo) {
+        const hitOrigin = Math.hypot(worldPt.x - gizmo.worldOx, worldPt.y - gizmo.worldOy) <= 18 * inv;
+        const hitHandle = Math.hypot(worldPt.x - gizmo.handleX, worldPt.y - gizmo.handleY) <= 12 * inv;
+        if (hitOrigin) {
+          if (gizmo.layer === 'mouth') {
+            const ml = state.mouthLayer;
+            pushMouthTransformUndo(state.currentFrame, ml);
+            const curM = getActiveMouthState(ml);
+            const copy = { ...curM };
+            applyMouthOriginChange(copy, 0, 0);
+            setMouthKeyAtCurrentFrame({ x: copy.x, y: copy.y, originDx: 0, originDy: 0 }, state.currentFrame, ml);
+          } else {
+            const targetObj =
+              gizmo.layer === 'bg' ? state.bgLayer : gizmo.layer === 'vector' ? gizmo.vecEntry?.cel : gizmo.celEntry?.cel;
+            if (targetObj) {
+              if ((gizmo.layer === 'cel' || gizmo.layer === 'vector') && (targetObj as Cel | VectorCel).posKeys?.length) {
+                pushTweenUndo(targetObj as Cel | VectorCel);
+              } else if (gizmo.layer === 'vector') {
+                pushVectorMoveUndo(targetObj as VectorCel, targetObj.offsetX, targetObj.offsetY);
+              } else {
+                pushMoveUndo(targetObj as Cel | BgLayer, targetObj.offsetX, targetObj.offsetY);
+              }
+              applyLayerOriginChange(gizmo.layer, targetObj, gizmo.ox, gizmo.oy, gizmo.defaultOx, gizmo.defaultOy);
+              delete targetObj.originX;
+              delete targetObj.originY;
+            }
+          }
+          renderStage();
+          onNotify('Reset origin point to layer center.');
+          return;
+        }
+        if (hitHandle) {
+          if (gizmo.layer === 'mouth') {
+            const ml = state.mouthLayer;
+            pushMouthTransformUndo(state.currentFrame, ml);
+            setMouthKeyAtCurrentFrame({ rotation: 0 }, state.currentFrame, ml);
+          } else {
+            const targetObj =
+              gizmo.layer === 'bg' ? state.bgLayer : gizmo.layer === 'vector' ? gizmo.vecEntry?.cel : gizmo.celEntry?.cel;
+            if (targetObj) {
+              if ((gizmo.layer === 'cel' || gizmo.layer === 'vector') && (targetObj as Cel | VectorCel).posKeys?.length) {
+                pushTweenUndo(targetObj as Cel | VectorCel);
+              } else if (gizmo.layer === 'vector') {
+                pushVectorMoveUndo(targetObj as VectorCel, targetObj.offsetX, targetObj.offsetY);
+              } else {
+                pushMoveUndo(targetObj as Cel | BgLayer, targetObj.offsetX, targetObj.offsetY);
+              }
+              targetObj.rotation = 0;
+            }
+          }
+          updateStageBadge();
+          renderStage();
+          onNotify('Reset layer rotation to 0°.');
+          return;
+        }
+      }
+    }
+
+    if (state.tool !== 'moveCam' || (state.activeLayer !== 'cel' && state.activeLayer !== 'vector')) return;
+    const entry: { start: number; cel: Cel | VectorCel } | null =
+      state.activeLayer === 'vector'
+        ? getVectorCelEntryAt(state.currentFrame)
+        : getCelEntryAt(state.currentFrame);
+    const hit = hitTestLayerMotionPath(
+      activeScene(),
+      getLayerKeyForActive(activeTimelineTarget()),
+      entry,
+      worldPt,
+      cam,
+      getTotalViewScale()
+    );
+    if (!entry || !hit || !entry.cel.posKeys) return;
+
+    if (hit.kind === 'curveHandle' || hit.kind === 'segment') {
+      const segA = entry.cel.posKeys[hit.segIndex];
+      if (!segA) return;
+      pushTweenUndo(entry.cel);
+      delete segA.ctrlDx;
+      delete segA.ctrlDy;
+      renderStage();
+      onNotify('Reset motion arc segment to straight line.');
+    } else if (hit.kind === 'key') {
+      const k = entry.cel.posKeys[hit.keyIndex];
+      if (k) goToFrame(entry.start + k.relFrame);
+    }
   });
 
   stage.addEventListener('pointerleave', () => {
     hoverStagePt = null;
+    hoverMotionHit = null;
     if (!isPointerDown) renderStage();
   });
 
@@ -3574,18 +6417,31 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (fileName && 'name' in targetLayerObj) targetLayerObj.name = fileName;
   }
 
-  function loadImageFile(file: File, destination: 'bg' | 'cel', targetFrame = state.currentFrame): void {
+  let pendingBgUploadId: string | null = null;
+
+  function loadImageFile(
+    file: File,
+    destination: 'bg' | 'cel',
+    targetFrame = state.currentFrame,
+    targetId?: string
+  ): void {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
       if (destination === 'bg') {
-        state.bgLayer.visible = true;
+        const sc = activeScene();
+        const bg = (targetId && sc.bgLayers.find((b) => b.id === targetId)) || state.bgLayer;
+        sc.activeBgLayerId = bg.id;
+        bg.visible = true;
         if (!state.showBgTrack) toggleBgTrack(true);
-        drawImageFittedOnLayer(state.bgLayer, img, file.name);
+        drawImageFittedOnLayer(bg, img, file.name);
         updateBgUI();
       } else {
+        const target = activeTimelineTarget();
+        const cTrk = (targetId && target.celTracks.find((t) => t.id === targetId)) || state.activeCelTrack;
+        target.activeCelTrackId = cTrk.id;
         goToFrame(targetFrame);
-        const { cel } = ensureCelAt(targetFrame, false);
+        const { cel } = ensureCelAt(targetFrame, false, cTrk.cels);
         drawImageFittedOnLayer(cel, img, file.name);
         renderTimeline();
       }
@@ -3598,12 +6454,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   let timelineCustomExtraHeight = 0;
 
   function getTimelineBaseExtra(): number {
-    let extra = 0;
-    if (state.showMouthTrack) extra += 38;
-    if (state.showVectorTrack) extra += 36;
-    if (state.showBgTrack) extra += 36;
-    if (state.showAudioTrack) extra += 42;
-    if (state.showCamTrack) extra += 36;
+    const target = activeTimelineTarget();
+    const isScene = 'mouthLayers' in target;
+    let extra = Math.max(0, target.celTracks.length - 1) * 36;
+    if (isScene && state.showMouthTrack) extra += Math.max(1, target.mouthLayers.length) * 38;
+    if (state.showVectorTrack) extra += Math.max(1, target.vectorTracks.length) * 36;
+    if (isScene && state.showBgTrack) extra += Math.max(1, target.bgLayers.length) * 36;
+    if (isScene && state.showAudioTrack) extra += Math.max(1, target.audioTracks.length) * 42;
+    if (isScene && state.showCamTrack) extra += 36;
     return extra;
   }
 
@@ -3650,24 +6508,1646 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     });
   });
 
+  interface CelTrackDom {
+    trackId: string;
+    labelEl: HTMLDivElement;
+    rowEl: HTMLDivElement;
+    rightEl: HTMLDivElement;
+    tagSpan: HTMLSpanElement;
+    tagTextSpan: HTMLSpanElement;
+    btnVis: HTMLButtonElement;
+    btnRemove: HTMLButtonElement;
+  }
+
+  interface VectorTrackDom {
+    trackId: string;
+    labelEl: HTMLDivElement;
+    rowEl: HTMLDivElement;
+    rightEl: HTMLDivElement;
+    tagSpan: HTMLSpanElement;
+    tagTextSpan: HTMLSpanElement;
+    btnVis: HTMLButtonElement;
+    btnRemove: HTMLButtonElement;
+  }
+
+  interface BgTrackDom {
+    layerId: string;
+    labelEl: HTMLDivElement;
+    rowEl: HTMLDivElement;
+    rightEl: HTMLDivElement;
+    tagSpan: HTMLSpanElement;
+    tagTextSpan: HTMLSpanElement;
+    spanBarEl: HTMLDivElement;
+    btnVis: HTMLButtonElement;
+    btnRemove: HTMLButtonElement;
+  }
+
+  interface MouthTrackDom {
+    layerId: string;
+    labelEl: HTMLDivElement;
+    rowEl: HTMLDivElement;
+    rightEl: HTMLDivElement;
+    tagSpan: HTMLSpanElement;
+    tagTextSpan: HTMLSpanElement;
+    btnVis: HTMLButtonElement;
+    btnRemove: HTMLButtonElement;
+  }
+
+  let renderedCelTrackIds: string[] = [];
+  let renderedVectorTrackIds: string[] = [];
+  let renderedBgLayerIds: string[] = [];
+  let renderedMouthLayerIds: string[] = [];
+  const celTrackDomMap = new Map<string, CelTrackDom>();
+  const vectorTrackDomMap = new Map<string, VectorTrackDom>();
+  const bgTrackDomMap = new Map<string, BgTrackDom>();
+  const mouthTrackDomMap = new Map<string, MouthTrackDom>();
+  const boundLayerLabelEls = new WeakSet<HTMLElement>();
+  let renamingLayerKey: string | null = null;
+  let lastLayerDragEndTime = 0;
+  let contextMenuLayerKey: string | null = null;
+
+  let layerDragState: {
+    dragKey: string;
+    labelEl: HTMLElement;
+    startY: number;
+    started: boolean;
+    dropTargetKey: string | null;
+    dropPos: 'above' | 'below';
+  } | null = null;
+
+  let celStretchState: {
+    trackId: string;
+    celsMap: Map<number, Cel>;
+    targetStart: number;
+    origTotalFrames: number;
+    origCels: Array<{ start: number; cel: Cel; duration: number }>;
+    lastTargetFrame: number;
+  } | null = null;
+
+  let vectorStretchState: {
+    trackId: string;
+    celsMap: Map<number, VectorCel>;
+    targetStart: number;
+    origTotalFrames: number;
+    origCels: Array<{ start: number; cel: VectorCel; duration: number }>;
+    lastTargetFrame: number;
+  } | null = null;
+
+  let contextTargetFrame = 0;
+  let contextTargetLayer: 'cel' | 'vector' = 'cel';
+  let contextTargetCelTrackId: string | null = null;
+  let contextTargetVectorTrackId: string | null = null;
+
+  function selectLayerByKey(key: string): void {
+    if (key.startsWith('mouth:')) selectMouthLayer(key.slice(6));
+    else if (key.startsWith('cel:')) selectCelTrack(key.slice(4));
+    else if (key.startsWith('bg:')) selectBgLayer(key.slice(3));
+    else if (key.startsWith('vector:')) selectVectorTrack(key.slice(7));
+    else if (key === 'mouth') selectTimelineTrack('mouth');
+    else if (key === 'cel') selectTimelineTrack('cel');
+    else if (key === 'bg') selectTimelineTrack('bg');
+  }
+
+  function startLayerRename(key: string): void {
+    const labelEl = getLayerLabelElement(key);
+    if (!labelEl) return;
+    const tagSpan = labelEl.querySelector<HTMLElement>('.track-tag');
+    const textSpan = labelEl.querySelector<HTMLElement>('.track-tag-text');
+    if (!tagSpan || !textSpan) return;
+
+    const existingInput = tagSpan.querySelector<HTMLInputElement>('.layer-rename-input');
+    if (existingInput) {
+      existingInput.focus();
+      existingInput.select();
+      return;
+    }
+
+    renamingLayerKey = key;
+    const curName = getLayerDisplayName(activeTimelineTarget(), key);
+    textSpan.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'layer-rename-input';
+    input.value = curName;
+    input.maxLength = 36;
+    tagSpan.appendChild(input);
+
+    let finished = false;
+    const finishRename = (commit: boolean) => {
+      if (finished) return;
+      finished = true;
+      const nextVal = input.value.trim();
+      input.remove();
+      textSpan.style.display = '';
+      renamingLayerKey = null;
+      if (commit && nextVal) {
+        setLayerDisplayName(activeTimelineTarget(), key, nextVal);
+        updateMouthWidget();
+        updateStageBadge();
+        updateBgUI();
+      }
+      syncLayerTrackContainers();
+    };
+
+    input.addEventListener('pointerdown', (e) => e.stopPropagation());
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('dblclick', (e) => e.stopPropagation());
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finishRename(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        finishRename(false);
+      }
+    });
+    input.addEventListener('blur', () => finishRename(true));
+
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+  }
+
+  function getLayerLabelElement(key: string): HTMLDivElement | null {
+    if (key.startsWith('mouth:')) return mouthTrackDomMap.get(key.slice(6))?.labelEl || null;
+    if (key.startsWith('cel:')) return celTrackDomMap.get(key.slice(4))?.labelEl || null;
+    if (key.startsWith('bg:')) return bgTrackDomMap.get(key.slice(3))?.labelEl || null;
+    if (key.startsWith('vector:')) return vectorTrackDomMap.get(key.slice(7))?.labelEl || null;
+    return null;
+  }
+
+  function getLayerRowElement(key: string): HTMLDivElement | null {
+    if (key.startsWith('mouth:')) return mouthTrackDomMap.get(key.slice(6))?.rowEl || null;
+    if (key.startsWith('cel:')) return celTrackDomMap.get(key.slice(4))?.rowEl || null;
+    if (key.startsWith('bg:')) return bgTrackDomMap.get(key.slice(3))?.rowEl || null;
+    if (key.startsWith('vector:')) return vectorTrackDomMap.get(key.slice(7))?.rowEl || null;
+    return null;
+  }
+
+  function getLayerRightElement(key: string): HTMLDivElement | null {
+    if (key.startsWith('mouth:')) return mouthTrackDomMap.get(key.slice(6))?.rightEl || null;
+    if (key.startsWith('cel:')) return celTrackDomMap.get(key.slice(4))?.rightEl || null;
+    if (key.startsWith('bg:')) return bgTrackDomMap.get(key.slice(3))?.rightEl || null;
+    if (key.startsWith('vector:')) return vectorTrackDomMap.get(key.slice(7))?.rightEl || null;
+    return null;
+  }
+
+  function clearLayerDragDropIndicators(): void {
+    layerLabelsContainer.querySelectorAll('.layer-dragging, .drop-above, .drop-below').forEach((el) => {
+      el.classList.remove('layer-dragging', 'drop-above', 'drop-below');
+    });
+  }
+
+  function getNearestVisibleLayerAbove(target: Scene | NestedClip, key: string): string | null {
+    normalizeTargetHierarchy(target);
+    const idx = target.layerOrder.indexOf(key);
+    for (let i = idx - 1; i >= 0; i--) {
+      const k = target.layerOrder[i];
+      const lbl = getLayerLabelElement(k);
+      if (lbl && !lbl.classList.contains('hidden-track')) return k;
+    }
+    return null;
+  }
+
+  function canDeleteLayerKey(target: Scene | NestedClip, key: string): boolean {
+    if (key.startsWith('vector:')) return target.vectorTracks.length > 1;
+    if (key.startsWith('cel:')) return target.celTracks.length > 1;
+    if (key.startsWith('bg:') && 'bgLayers' in target) return target.bgLayers.length > 1;
+    if (key.startsWith('mouth:') && 'mouthLayers' in target) return target.mouthLayers.length > 1;
+    return false;
+  }
+
+  function openLayerContextMenu(key: string, clientX: number, clientY: number): void {
+    hideMenus();
+    selectLayerByKey(key);
+    contextMenuLayerKey = key;
+
+    const target = activeTimelineTarget();
+    normalizeTargetHierarchy(target);
+    const prevAbove = getNearestVisibleLayerAbove(target, key);
+    const canJoinAbove = Boolean(prevAbove && !isLayerDescendant(target, key, prevAbove));
+    ctxLayerJoinAbove.disabled = !canJoinAbove;
+    ctxLayerJoinAbove.textContent = prevAbove
+      ? `Join as Child of ${getLayerDisplayName(target, prevAbove)}`
+      : 'Join as Child of Above';
+
+    ctxLayerDetach.disabled = !target.layerParents?.[key];
+    ctxLayerClear.classList.toggle('hidden-nest-ui', !key.startsWith('bg:'));
+    ctxLayerDelete.classList.toggle('hidden-nest-ui', !canDeleteLayerKey(target, key));
+
+    layerContextMenu.style.display = 'flex';
+    const menuW = 228;
+    const menuH = 220;
+    const left = Math.min(window.innerWidth - menuW - 6, clientX);
+    const top = Math.min(window.innerHeight - menuH - 6, clientY);
+    layerContextMenu.style.left = `${left}px`;
+    layerContextMenu.style.top = `${top}px`;
+  }
+
+  function setupLayerLabelInteractions(labelEl: HTMLDivElement, getKey: () => string): void {
+    if (boundLayerLabelEls.has(labelEl)) return;
+    boundLayerLabelEls.add(labelEl);
+
+    labelEl.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement)?.closest('button, input, select')) return;
+      if (renamingLayerKey !== null) return;
+      layerDragState = {
+        dragKey: getKey(),
+        labelEl,
+        startY: e.clientY,
+        started: false,
+        dropTargetKey: null,
+        dropPos: 'above',
+      };
+    });
+
+    labelEl.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement)?.closest('button, input, select')) return;
+      if (renamingLayerKey !== null) return;
+      if (performance.now() - lastLayerDragEndTime < 220) return;
+      selectLayerByKey(getKey());
+    });
+
+    labelEl.addEventListener('dblclick', (e) => {
+      if ((e.target as HTMLElement)?.closest('button, input, select')) return;
+      e.stopPropagation();
+      startLayerRename(getKey());
+    });
+
+    labelEl.addEventListener('contextmenu', (e) => {
+      if ((e.target as HTMLElement)?.closest('input, select')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openLayerContextMenu(getKey(), e.clientX, e.clientY);
+    });
+  }
+
+  window.addEventListener(
+    'pointermove',
+    (e) => {
+      if (!layerDragState) return;
+      if (!layerDragState.started) {
+        if (Math.abs(e.clientY - layerDragState.startY) <= 5) return;
+        layerDragState.started = true;
+        layerDragState.labelEl.classList.add('layer-dragging');
+        document.body.style.cursor = 'grabbing';
+      }
+
+      clearLayerDragDropIndicators();
+      layerDragState.labelEl.classList.add('layer-dragging');
+
+      const target = activeTimelineTarget();
+      normalizeTargetHierarchy(target);
+      const dragBlock = getContiguousLayerSubtree(target, layerDragState.dragKey);
+      let nextDropKey: string | null = null;
+      let nextDropPos: 'above' | 'below' = 'above';
+
+      const visibleEntries: Array<{ key: string; el: HTMLElement; rect: DOMRect }> = [];
+      for (const k of target.layerOrder) {
+        const el = getLayerLabelElement(k);
+        if (!el || el.classList.contains('hidden-track')) continue;
+        visibleEntries.push({ key: k, el, rect: el.getBoundingClientRect() });
+      }
+
+      for (const item of visibleEntries) {
+        if (dragBlock.includes(item.key)) continue;
+        if (e.clientY >= item.rect.top && e.clientY <= item.rect.bottom) {
+          nextDropKey = item.key;
+          nextDropPos = e.clientY < item.rect.top + item.rect.height / 2 ? 'above' : 'below';
+          break;
+        }
+      }
+
+      if (!nextDropKey && visibleEntries.length > 0) {
+        const first = visibleEntries[0];
+        const last = visibleEntries[visibleEntries.length - 1];
+        if (e.clientY < first.rect.top && !dragBlock.includes(first.key)) {
+          nextDropKey = first.key;
+          nextDropPos = 'above';
+        } else if (e.clientY > last.rect.bottom && !dragBlock.includes(last.key)) {
+          nextDropKey = last.key;
+          nextDropPos = 'below';
+        }
+      }
+
+      layerDragState.dropTargetKey = nextDropKey;
+      layerDragState.dropPos = nextDropPos;
+      if (nextDropKey) {
+        const dropEl = getLayerLabelElement(nextDropKey);
+        dropEl?.classList.add(nextDropPos === 'above' ? 'drop-above' : 'drop-below');
+      }
+    },
+    { signal }
+  );
+
+  const finishLayerDrag = () => {
+    if (!layerDragState) return;
+    const ds = layerDragState;
+    layerDragState = null;
+    clearLayerDragDropIndicators();
+    document.body.style.cursor = '';
+
+    if (!ds.started) return;
+    lastLayerDragEndTime = performance.now();
+
+    if (!ds.dropTargetKey || ds.dropTargetKey === ds.dragKey) return;
+    const rootSc = activeScene();
+    const target = activeTimelineTarget();
+    normalizeTargetHierarchy(target);
+
+    const block = getContiguousLayerSubtree(target, ds.dragKey);
+    if (block.includes(ds.dropTargetKey)) return;
+
+    const oldParent = target.layerParents?.[ds.dragKey] || null;
+    const remaining = target.layerOrder.filter((k) => !block.includes(k));
+    const targetIdx = remaining.indexOf(ds.dropTargetKey);
+    if (targetIdx < 0) return;
+
+    const insertIdx = ds.dropPos === 'above' ? targetIdx : targetIdx + 1;
+    const aboveKey = insertIdx > 0 ? remaining[insertIdx - 1] : null;
+    if (oldParent && (!aboveKey || (aboveKey !== oldParent && !isLayerDescendant(target, oldParent, aboveKey)))) {
+      setLayerParentKeepWorld(rootSc, target, ds.dragKey, null, state.currentFrame);
+    }
+
+    const updatedRemaining = target.layerOrder.filter((k) => !block.includes(k));
+    const updatedTargetIdx = updatedRemaining.indexOf(ds.dropTargetKey);
+    if (updatedTargetIdx < 0) return;
+    const finalInsertIdx = ds.dropPos === 'above' ? updatedTargetIdx : updatedTargetIdx + 1;
+    updatedRemaining.splice(finalInsertIdx, 0, ...block);
+    target.layerOrder = updatedRemaining;
+    normalizeTargetHierarchy(target);
+
+    syncLayerTrackContainers();
+    updateActiveTrackHighlight();
+    updateStageBadge();
+    renderTimeline();
+    renderStage();
+  };
+
+  window.addEventListener('pointerup', finishLayerDrag, { signal });
+  window.addEventListener('pointercancel', finishLayerDrag, { signal });
+
+  function createLayerTagDom(colorClass: string, initialText: string, titleText: string): {
+    tagSpan: HTMLSpanElement;
+    tagTextSpan: HTMLSpanElement;
+  } {
+    const tagSpan = document.createElement('span');
+    tagSpan.className = 'track-tag';
+    tagSpan.title = titleText;
+    const icon = document.createElement('i');
+    icon.className = colorClass;
+    const childArrow = document.createElement('span');
+    childArrow.className = 'layer-child-arrow';
+    childArrow.textContent = '↳';
+    const tagTextSpan = document.createElement('span');
+    tagTextSpan.className = 'track-tag-text';
+    tagTextSpan.textContent = initialText;
+    tagSpan.append(icon, childArrow, tagTextSpan);
+    return { tagSpan, tagTextSpan };
+  }
+
+  function syncLayerTrackContainers(): void {
+    const target = activeTimelineTarget();
+    const isScene = 'mouthLayers' in target;
+    if (target.celTracks.length === 0) getActiveCelTrackInTarget(target);
+    if (target.vectorTracks.length === 0) getActiveVectorTrackInTarget(target);
+    if (isScene && target.bgLayers.length === 0) getActiveBgLayerInScene(target);
+    if (isScene && target.mouthLayers.length === 0) getActiveMouthLayerInScene(target);
+    normalizeTargetHierarchy(target);
+
+    const celTracks = target.celTracks;
+    const vecTracks = target.vectorTracks;
+    const bgLayers = isScene ? target.bgLayers : [];
+    const mouthLayers = isScene ? target.mouthLayers : [];
+
+    const canRebuild =
+      !celStretchState && !vectorStretchState && !layerDragState && renamingLayerKey === null;
+
+    if (canRebuild) {
+      // 1. Cel Tracks
+      const celIdSet = new Set(celTracks.map((t) => t.id));
+      const celIdsMatch =
+        renderedCelTrackIds.length === celTracks.length && celTracks.every((t) => celTrackDomMap.has(t.id));
+      if (!celIdsMatch) {
+        for (const [oldId, dom] of celTrackDomMap.entries()) {
+          if (!celIdSet.has(oldId)) {
+            dom.labelEl.remove();
+            dom.rowEl.remove();
+            dom.rightEl.remove();
+            celTrackDomMap.delete(oldId);
+          }
+        }
+        for (const trk of celTracks) {
+          if (celTrackDomMap.has(trk.id)) continue;
+          const trackId = trk.id;
+          const labelEl = document.createElement('div');
+          labelEl.className = 'track-label cel-track-label';
+          labelEl.title = 'Drag up/down to reorder • Double-click name to rename • Right-click for Child options';
+          const { tagSpan, tagTextSpan } = createLayerTagDom(
+            'bg-[#4ade80]',
+            trk.name,
+            `Click to draw on ${trk.name} • Double-click to rename`
+          );
+          const btnGroup = document.createElement('div');
+          btnGroup.className = 'flex gap-[3px] shrink-0';
+
+          const btnAddChild = document.createElement('button');
+          btnAddChild.type = 'button';
+          btnAddChild.className = 'mini-btn';
+          btnAddChild.textContent = '+↳';
+          btnAddChild.title = `Add Child Bitmap Layer under ${trk.name}`;
+          btnAddChild.onclick = (e) => {
+            e.stopPropagation();
+            addChildCelTrack(`cel:${trackId}`);
+          };
+
+          const btnAdd = document.createElement('button');
+          btnAdd.type = 'button';
+          btnAdd.className = 'mini-btn';
+          btnAdd.textContent = '+';
+          btnAdd.title = 'Add Bitmap Layer';
+          btnAdd.onclick = (e) => {
+            e.stopPropagation();
+            addCelTrack();
+          };
+
+          const btnVis = document.createElement('button');
+          btnVis.type = 'button';
+          btnVis.className = 'mini-btn';
+          btnVis.textContent = '👁';
+          btnVis.title = 'Toggle Bitmap Layer Visibility';
+          btnVis.onclick = (e) => {
+            e.stopPropagation();
+            const curTrk = activeTimelineTarget().celTracks.find((t) => t.id === trackId);
+            if (!curTrk) return;
+            curTrk.visible = !curTrk.visible;
+            btnVis.style.opacity = curTrk.visible ? '1' : '0.35';
+            renderStage();
+          };
+
+          const btnRemove = document.createElement('button');
+          btnRemove.type = 'button';
+          btnRemove.className = 'mini-btn danger';
+          btnRemove.textContent = '✕';
+          btnRemove.title = 'Delete Bitmap Layer';
+          btnRemove.onclick = (e) => {
+            e.stopPropagation();
+            removeCelTrack(trackId);
+          };
+
+          btnGroup.append(btnAddChild, btnAdd, btnVis, btnRemove);
+          labelEl.append(tagSpan, btnGroup);
+          setupLayerLabelInteractions(labelEl, () => `cel:${trackId}`);
+
+          const rowEl = document.createElement('div');
+          rowEl.className = 'track-row cel-track-row';
+          rowEl.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            selectCelTrack(trackId);
+            if (state.isPlaying) togglePlay();
+            const clickFrame = frameFromClientX(e.clientX);
+            goToFrame(clickFrame);
+
+            const curTrk = activeTimelineTarget().celTracks.find((t) => t.id === trackId);
+            if (!curTrk) return;
+            const entry = getCelEntryAt(clickFrame, curTrk.cels);
+            if (!entry) return;
+
+            rowEl.setPointerCapture(e.pointerId);
+            const origCels: Array<{ start: number; cel: Cel; duration: number }> = [];
+            for (const s of getSortedCelStarts(curTrk.cels)) {
+              const c = curTrk.cels.get(s);
+              if (c) origCels.push({ start: s, cel: c, duration: c.duration });
+            }
+            celStretchState = {
+              trackId,
+              celsMap: curTrk.cels,
+              targetStart: entry.start,
+              origTotalFrames: state.totalFrames,
+              origCels,
+              lastTargetFrame: clickFrame,
+            };
+          });
+
+          rowEl.addEventListener('pointermove', (e) => {
+            if (!celStretchState || celStretchState.trackId !== trackId) return;
+            const rect = timelineGrid.getBoundingClientRect();
+            let dragFrame = Math.floor(((e.clientX - rect.left) / rect.width) * state.totalFrames);
+            dragFrame = Math.max(celStretchState.targetStart, dragFrame);
+            if (dragFrame === celStretchState.lastTargetFrame) return;
+            celStretchState.lastTargetFrame = dragFrame;
+
+            const { targetStart, origCels, origTotalFrames, celsMap } = celStretchState;
+            const newDur = Math.max(1, dragFrame - targetStart + 1);
+            const nextOrig = origCels.find((item) => item.start > targetStart);
+            let pushShift = 0;
+            if (nextOrig) {
+              const neededNextStart = targetStart + newDur;
+              if (neededNextStart > nextOrig.start) pushShift = neededNextStart - nextOrig.start;
+            }
+
+            celsMap.clear();
+            let maxEnd = origTotalFrames;
+            for (const item of origCels) {
+              if (item.start < targetStart) {
+                item.cel.duration = item.duration;
+                celsMap.set(item.start, item.cel);
+              } else if (item.start === targetStart) {
+                item.cel.duration = newDur;
+                celsMap.set(item.start, item.cel);
+                maxEnd = Math.max(maxEnd, item.start + newDur);
+              } else {
+                const newStart = item.start + pushShift;
+                item.cel.duration = item.duration;
+                celsMap.set(newStart, item.cel);
+                maxEnd = Math.max(maxEnd, newStart + item.duration);
+              }
+            }
+
+            state.totalFrames = Math.max(origTotalFrames, maxEnd);
+            state.currentFrame = Math.min(state.totalFrames - 1, dragFrame);
+            renderTimeline();
+            renderStage();
+          });
+
+          rowEl.addEventListener('pointerup', () => {
+            if (celStretchState?.trackId === trackId) celStretchState = null;
+          });
+          rowEl.addEventListener('pointercancel', () => {
+            if (celStretchState?.trackId === trackId) celStretchState = null;
+          });
+
+          rowEl.addEventListener('dblclick', (e) => {
+            if (e.button !== 0) return;
+            selectCelTrack(trackId);
+            const f = frameFromClientX(e.clientX);
+            const curTrk = activeTimelineTarget().celTracks.find((t) => t.id === trackId);
+            const entry = curTrk ? getCelEntryAt(f, curTrk.cels) : null;
+            if (entry?.cel.nestId) {
+              openNestedAnimationAt('cel', f, trackId);
+            } else if (nestStack.length > 0) {
+              exitNestLevel();
+            }
+          });
+
+          rowEl.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (state.isPlaying) togglePlay();
+            selectCelTrack(trackId);
+            contextTargetLayer = 'cel';
+            contextTargetCelTrackId = trackId;
+            contextTargetVectorTrackId = null;
+            contextTargetFrame = frameFromClientX(e.clientX);
+            goToFrame(contextTargetFrame);
+
+            const curTrk = activeTimelineTarget().celTracks.find((t) => t.id === trackId);
+            const entry = curTrk ? getCelEntryAt(contextTargetFrame, curTrk.cels) : null;
+            const hasEntry = Boolean(entry);
+            const hasNest = Boolean(entry?.cel.nestId);
+            const hasTween = Boolean(entry && getActivePosKeys(entry.cel).length >= 2);
+            mustEl<HTMLButtonElement>('ctxDelete').disabled = !hasEntry;
+            mustEl<HTMLButtonElement>('ctxClear').disabled = !hasEntry;
+            ctxExitNest.classList.toggle('hidden-nest-ui', nestStack.length === 0);
+            ctxNest.textContent = hasNest
+              ? 'Open Nested Animation'
+              : hasEntry
+                ? 'Open Nested Animation'
+                : 'New Nested Animation';
+            ctxUnnest.classList.toggle('hidden-nest-ui', !hasNest);
+            ctxClearTween.classList.toggle('hidden-nest-ui', !hasTween);
+
+            celContextMenu.style.display = 'flex';
+            const menuW = 190;
+            const menuH = 250;
+            const left = Math.min(window.innerWidth - menuW - 6, e.clientX);
+            const top = Math.min(window.innerHeight - menuH - 6, e.clientY);
+            celContextMenu.style.left = `${left}px`;
+            celContextMenu.style.top = `${top}px`;
+          });
+
+          const rightEl = document.createElement('div');
+          rightEl.className = 'track-right-cell cel-track-right';
+          rightEl.onclick = () => selectCelTrack(trackId);
+
+          layerLabelsContainer.appendChild(labelEl);
+          layerRowsContainer.appendChild(rowEl);
+          layerRightsContainer.appendChild(rightEl);
+          celTrackDomMap.set(trackId, {
+            trackId,
+            labelEl,
+            rowEl,
+            rightEl,
+            tagSpan,
+            tagTextSpan,
+            btnVis,
+            btnRemove,
+          });
+        }
+        renderedCelTrackIds = celTracks.map((t) => t.id);
+      }
+
+      // 2. Vector Tracks
+      const vecIdSet = new Set(vecTracks.map((t) => t.id));
+      const vecIdsMatch =
+        renderedVectorTrackIds.length === vecTracks.length && vecTracks.every((t) => vectorTrackDomMap.has(t.id));
+      if (!vecIdsMatch) {
+        for (const [oldId, dom] of vectorTrackDomMap.entries()) {
+          if (!vecIdSet.has(oldId)) {
+            dom.labelEl.remove();
+            dom.rowEl.remove();
+            dom.rightEl.remove();
+            vectorTrackDomMap.delete(oldId);
+          }
+        }
+        for (const trk of vecTracks) {
+          if (vectorTrackDomMap.has(trk.id)) continue;
+          const trackId = trk.id;
+          const labelEl = document.createElement('div');
+          labelEl.className = 'track-label vector-track-label' + (state.showVectorTrack ? '' : ' hidden-track');
+          labelEl.title = 'Drag up/down to reorder • Double-click name to rename • Right-click for Child options';
+          const { tagSpan, tagTextSpan } = createLayerTagDom(
+            'bg-[#38bdf8]',
+            trk.name,
+            `Click to draw on ${trk.name} • Double-click to rename`
+          );
+
+          const btnGroup = document.createElement('div');
+          btnGroup.className = 'flex gap-[3px] shrink-0';
+
+          const btnAddChild = document.createElement('button');
+          btnAddChild.type = 'button';
+          btnAddChild.className = 'mini-btn';
+          btnAddChild.textContent = '+↳';
+          btnAddChild.title = `Add Child Layer under ${trk.name}`;
+          btnAddChild.onclick = (e) => {
+            e.stopPropagation();
+            addChildVectorTrack(`vector:${trackId}`);
+          };
+
+          const btnAdd = document.createElement('button');
+          btnAdd.type = 'button';
+          btnAdd.className = 'mini-btn';
+          btnAdd.textContent = '+';
+          btnAdd.title = 'Add Vector Layer';
+          btnAdd.onclick = (e) => {
+            e.stopPropagation();
+            addVectorTrack();
+          };
+
+          const btnVis = document.createElement('button');
+          btnVis.type = 'button';
+          btnVis.className = 'mini-btn';
+          btnVis.textContent = '👁';
+          btnVis.title = 'Toggle Vector Layer Visibility';
+          btnVis.onclick = (e) => {
+            e.stopPropagation();
+            const curTrk = activeTimelineTarget().vectorTracks.find((t) => t.id === trackId);
+            if (!curTrk) return;
+            curTrk.visible = !curTrk.visible;
+            btnVis.style.opacity = curTrk.visible ? '1' : '0.35';
+            renderStage();
+          };
+
+          const btnRemove = document.createElement('button');
+          btnRemove.type = 'button';
+          btnRemove.className = 'mini-btn danger';
+          btnRemove.textContent = '✕';
+          btnRemove.title = 'Delete Vector Layer';
+          btnRemove.onclick = (e) => {
+            e.stopPropagation();
+            removeVectorTrack(trackId);
+          };
+
+          btnGroup.append(btnAddChild, btnAdd, btnVis, btnRemove);
+          labelEl.append(tagSpan, btnGroup);
+          setupLayerLabelInteractions(labelEl, () => `vector:${trackId}`);
+
+          const rowEl = document.createElement('div');
+          rowEl.className = 'track-row vector-track-row' + (state.showVectorTrack ? '' : ' hidden-track');
+
+          rowEl.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            selectVectorTrack(trackId);
+            if (state.isPlaying) togglePlay();
+            const clickFrame = frameFromClientX(e.clientX);
+            goToFrame(clickFrame);
+
+            const curTrk = activeTimelineTarget().vectorTracks.find((t) => t.id === trackId);
+            if (!curTrk) return;
+            const entry = getVectorCelEntryAt(clickFrame, curTrk.cels);
+            if (!entry) return;
+
+            rowEl.setPointerCapture(e.pointerId);
+            const origCels: Array<{ start: number; cel: VectorCel; duration: number }> = [];
+            for (const s of getSortedVectorCelStarts(curTrk.cels)) {
+              const c = curTrk.cels.get(s);
+              if (c) origCels.push({ start: s, cel: c, duration: c.duration });
+            }
+            vectorStretchState = {
+              trackId,
+              celsMap: curTrk.cels,
+              targetStart: entry.start,
+              origTotalFrames: state.totalFrames,
+              origCels,
+              lastTargetFrame: clickFrame,
+            };
+          });
+
+          rowEl.addEventListener('pointermove', (e) => {
+            if (!vectorStretchState || vectorStretchState.trackId !== trackId) return;
+            const rect = timelineGrid.getBoundingClientRect();
+            let dragFrame = Math.floor(((e.clientX - rect.left) / rect.width) * state.totalFrames);
+            dragFrame = Math.max(vectorStretchState.targetStart, dragFrame);
+            if (dragFrame === vectorStretchState.lastTargetFrame) return;
+            vectorStretchState.lastTargetFrame = dragFrame;
+
+            const { targetStart, origCels, origTotalFrames, celsMap } = vectorStretchState;
+            const newDur = Math.max(1, dragFrame - targetStart + 1);
+            const nextOrig = origCels.find((item) => item.start > targetStart);
+            let pushShift = 0;
+            if (nextOrig) {
+              const neededNextStart = targetStart + newDur;
+              if (neededNextStart > nextOrig.start) pushShift = neededNextStart - nextOrig.start;
+            }
+
+            celsMap.clear();
+            let maxEnd = origTotalFrames;
+            for (const item of origCels) {
+              if (item.start < targetStart) {
+                item.cel.duration = item.duration;
+                celsMap.set(item.start, item.cel);
+              } else if (item.start === targetStart) {
+                item.cel.duration = newDur;
+                celsMap.set(item.start, item.cel);
+                maxEnd = Math.max(maxEnd, item.start + newDur);
+              } else {
+                const newStart = item.start + pushShift;
+                item.cel.duration = item.duration;
+                celsMap.set(newStart, item.cel);
+                maxEnd = Math.max(maxEnd, newStart + item.duration);
+              }
+            }
+
+            state.totalFrames = Math.max(origTotalFrames, maxEnd);
+            state.currentFrame = Math.min(state.totalFrames - 1, dragFrame);
+            renderTimeline();
+            renderStage();
+          });
+
+          rowEl.addEventListener('pointerup', () => {
+            if (vectorStretchState?.trackId === trackId) vectorStretchState = null;
+          });
+          rowEl.addEventListener('pointercancel', () => {
+            if (vectorStretchState?.trackId === trackId) vectorStretchState = null;
+          });
+
+          rowEl.addEventListener('dblclick', (e) => {
+            if (e.button !== 0) return;
+            selectVectorTrack(trackId);
+            const f = frameFromClientX(e.clientX);
+            const curTrk = activeTimelineTarget().vectorTracks.find((t) => t.id === trackId);
+            const entry = curTrk ? getVectorCelEntryAt(f, curTrk.cels) : null;
+            if (entry?.cel.nestId) {
+              openNestedAnimationAt('vector', f, trackId);
+            } else if (nestStack.length > 0) {
+              exitNestLevel();
+            }
+          });
+
+          rowEl.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (state.isPlaying) togglePlay();
+            selectVectorTrack(trackId);
+            contextTargetLayer = 'vector';
+            contextTargetCelTrackId = null;
+            contextTargetVectorTrackId = trackId;
+            contextTargetFrame = frameFromClientX(e.clientX);
+            goToFrame(contextTargetFrame);
+
+            const curTrk = activeTimelineTarget().vectorTracks.find((t) => t.id === trackId);
+            const entry = curTrk ? getVectorCelEntryAt(contextTargetFrame, curTrk.cels) : null;
+            const hasEntry = Boolean(entry);
+            const hasNest = Boolean(entry?.cel.nestId);
+            const hasTween = Boolean(entry && getActivePosKeys(entry.cel).length >= 2);
+            mustEl<HTMLButtonElement>('ctxDelete').disabled = !hasEntry;
+            mustEl<HTMLButtonElement>('ctxClear').disabled = !hasEntry;
+            ctxExitNest.classList.toggle('hidden-nest-ui', nestStack.length === 0);
+            ctxNest.textContent = hasNest
+              ? 'Open Nested Animation'
+              : hasEntry
+                ? 'Open Nested Animation'
+                : 'New Nested Animation';
+            ctxUnnest.classList.toggle('hidden-nest-ui', !hasNest);
+            ctxClearTween.classList.toggle('hidden-nest-ui', !hasTween);
+
+            celContextMenu.style.display = 'flex';
+            const menuW = 190;
+            const menuH = 250;
+            const left = Math.min(window.innerWidth - menuW - 6, e.clientX);
+            const top = Math.min(window.innerHeight - menuH - 6, e.clientY);
+            celContextMenu.style.left = `${left}px`;
+            celContextMenu.style.top = `${top}px`;
+          });
+
+          const rightEl = document.createElement('div');
+          rightEl.className = 'track-right-cell vector-track-right' + (state.showVectorTrack ? '' : ' hidden-track');
+          rightEl.onclick = () => selectVectorTrack(trackId);
+
+          layerLabelsContainer.appendChild(labelEl);
+          layerRowsContainer.appendChild(rowEl);
+          layerRightsContainer.appendChild(rightEl);
+          vectorTrackDomMap.set(trackId, {
+            trackId,
+            labelEl,
+            rowEl,
+            rightEl,
+            tagSpan,
+            tagTextSpan,
+            btnVis,
+            btnRemove,
+          });
+        }
+        renderedVectorTrackIds = vecTracks.map((t) => t.id);
+      }
+
+      // 3. Background Layers (root scene only)
+      const bgIdSet = new Set(bgLayers.map((b) => b.id));
+      const bgIdsMatch =
+        renderedBgLayerIds.length === bgLayers.length && bgLayers.every((b) => bgTrackDomMap.has(b.id));
+      if (!bgIdsMatch) {
+        for (const [oldId, dom] of bgTrackDomMap.entries()) {
+          if (!bgIdSet.has(oldId)) {
+            dom.labelEl.remove();
+            dom.rowEl.remove();
+            dom.rightEl.remove();
+            bgTrackDomMap.delete(oldId);
+          }
+        }
+        for (const bg of bgLayers) {
+          if (bgTrackDomMap.has(bg.id)) continue;
+          const layerId = bg.id;
+          const labelEl = document.createElement('div');
+          labelEl.className = 'track-label bg-track-label' + (state.showBgTrack ? '' : ' hidden-track');
+          labelEl.title = 'Drag up/down to reorder • Double-click name to rename • Right-click for Child options';
+          const { tagSpan, tagTextSpan } = createLayerTagDom(
+            'bg-[#94a3b8]',
+            bg.trackName,
+            `Click to edit ${bg.trackName} • Double-click to rename`
+          );
+
+          const btnGroup = document.createElement('div');
+          btnGroup.className = 'flex gap-[3px] shrink-0';
+
+          const btnImg = document.createElement('button');
+          btnImg.type = 'button';
+          btnImg.className = 'mini-btn';
+          btnImg.textContent = '📷';
+          btnImg.title = 'Upload Background Image';
+          btnImg.onclick = (e) => {
+            e.stopPropagation();
+            pendingBgUploadId = layerId;
+            bgFileInput.click();
+          };
+
+          const btnClear = document.createElement('button');
+          btnClear.type = 'button';
+          btnClear.className = 'mini-btn danger';
+          btnClear.textContent = '⌫';
+          btnClear.title = 'Clear Background Artwork';
+          btnClear.onclick = (e) => {
+            e.stopPropagation();
+            const curBg = activeScene().bgLayers.find((b) => b.id === layerId);
+            if (!curBg) return;
+            pushPixelUndo(curBg);
+            curBg.canvas = createCelCanvas();
+            curBg.offsetX = 0;
+            curBg.offsetY = 0;
+            curBg.hasInk = false;
+            curBg.name = '';
+            updateBgUI();
+            renderStage();
+          };
+
+          const btnAdd = document.createElement('button');
+          btnAdd.type = 'button';
+          btnAdd.className = 'mini-btn';
+          btnAdd.textContent = '+';
+          btnAdd.title = 'Add Background Layer';
+          btnAdd.onclick = (e) => {
+            e.stopPropagation();
+            addBgTrack();
+          };
+
+          const btnVis = document.createElement('button');
+          btnVis.type = 'button';
+          btnVis.className = 'mini-btn';
+          btnVis.textContent = '👁';
+          btnVis.title = 'Toggle Background Visibility';
+          btnVis.onclick = (e) => {
+            e.stopPropagation();
+            const curBg = activeScene().bgLayers.find((b) => b.id === layerId);
+            if (!curBg) return;
+            curBg.visible = !curBg.visible;
+            updateBgUI();
+            renderStage();
+          };
+
+          const btnRemove = document.createElement('button');
+          btnRemove.type = 'button';
+          btnRemove.className = 'mini-btn danger';
+          btnRemove.textContent = '✕';
+          btnRemove.title = 'Delete Background Layer';
+          btnRemove.onclick = (e) => {
+            e.stopPropagation();
+            removeBgTrack(layerId);
+          };
+
+          btnGroup.append(btnImg, btnClear, btnAdd, btnVis, btnRemove);
+          labelEl.append(tagSpan, btnGroup);
+          setupLayerLabelInteractions(labelEl, () => `bg:${layerId}`);
+
+          const rowEl = document.createElement('div');
+          rowEl.className = 'track-row bg-track-row' + (state.showBgTrack ? '' : ' hidden-track');
+          const spanBarEl = document.createElement('div');
+          spanBarEl.className = 'bg-span-bar';
+          rowEl.appendChild(spanBarEl);
+          rowEl.onclick = () => selectBgLayer(layerId);
+
+          const rightEl = document.createElement('div');
+          rightEl.className = 'track-right-cell bg-track-right' + (state.showBgTrack ? '' : ' hidden-track');
+          rightEl.onclick = () => selectBgLayer(layerId);
+
+          layerLabelsContainer.appendChild(labelEl);
+          layerRowsContainer.appendChild(rowEl);
+          layerRightsContainer.appendChild(rightEl);
+          bgTrackDomMap.set(layerId, {
+            layerId,
+            labelEl,
+            rowEl,
+            rightEl,
+            tagSpan,
+            tagTextSpan,
+            spanBarEl,
+            btnVis,
+            btnRemove,
+          });
+        }
+        renderedBgLayerIds = bgLayers.map((b) => b.id);
+      }
+
+      // 4. Mouth Layers (root scene only)
+      const mouthIdSet = new Set(mouthLayers.map((m) => m.id));
+      const mouthIdsMatch =
+        renderedMouthLayerIds.length === mouthLayers.length && mouthLayers.every((m) => mouthTrackDomMap.has(m.id));
+      if (!mouthIdsMatch) {
+        for (const [oldId, dom] of mouthTrackDomMap.entries()) {
+          if (!mouthIdSet.has(oldId)) {
+            dom.labelEl.remove();
+            dom.rowEl.remove();
+            dom.rightEl.remove();
+            mouthTrackDomMap.delete(oldId);
+          }
+        }
+        for (const ml of mouthLayers) {
+          if (mouthTrackDomMap.has(ml.id)) continue;
+          const layerId = ml.id;
+          const labelEl = document.createElement('div');
+          labelEl.className = 'track-label mouth-track-label' + (state.showMouthTrack ? '' : ' hidden-track');
+          labelEl.title = 'Drag up/down to reorder • Double-click name to rename • Right-click for Child options';
+          const { tagSpan, tagTextSpan } = createLayerTagDom(
+            'bg-[#f472b6]',
+            ml.name,
+            `Click to edit ${ml.name} • Double-click to rename`
+          );
+
+          const btnGroup = document.createElement('div');
+          btnGroup.className = 'flex gap-[3px] shrink-0';
+
+          const btnAddChild = document.createElement('button');
+          btnAddChild.type = 'button';
+          btnAddChild.className = 'mini-btn';
+          btnAddChild.textContent = '+↳';
+          btnAddChild.title = `Add Child Layer under ${ml.name}`;
+          btnAddChild.onclick = (e) => {
+            e.stopPropagation();
+            addChildVectorTrack(`mouth:${layerId}`);
+          };
+
+          const btnAdd = document.createElement('button');
+          btnAdd.type = 'button';
+          btnAdd.className = 'mini-btn';
+          btnAdd.textContent = '+';
+          btnAdd.title = 'Add Mouth Layer';
+          btnAdd.onclick = (e) => {
+            e.stopPropagation();
+            addMouthTrack();
+          };
+
+          const btnVis = document.createElement('button');
+          btnVis.type = 'button';
+          btnVis.className = 'mini-btn';
+          btnVis.textContent = '👁';
+          btnVis.title = 'Toggle Mouth Layer Visibility';
+          btnVis.onclick = (e) => {
+            e.stopPropagation();
+            const curMl = activeScene().mouthLayers.find((m) => m.id === layerId);
+            if (!curMl) return;
+            curMl.visible = !curMl.visible;
+            if (curMl.visible) ensureMouthInitInScene(activeScene(), curMl);
+            btnVis.style.opacity = curMl.visible ? '1' : '0.35';
+            updateMouthWidget();
+            renderStage();
+          };
+
+          const btnRemove = document.createElement('button');
+          btnRemove.type = 'button';
+          btnRemove.className = 'mini-btn danger';
+          btnRemove.textContent = '✕';
+          btnRemove.title = 'Delete Mouth Layer';
+          btnRemove.onclick = (e) => {
+            e.stopPropagation();
+            removeMouthTrack(layerId);
+          };
+
+          btnGroup.append(btnAddChild, btnAdd, btnVis, btnRemove);
+          labelEl.append(tagSpan, btnGroup);
+          setupLayerLabelInteractions(labelEl, () => `mouth:${layerId}`);
+
+          const rowEl = document.createElement('div');
+          rowEl.className = 'track-row mouth-track-row' + (state.showMouthTrack ? '' : ' hidden-track');
+          let mouthScrubbing = false;
+          rowEl.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            if (state.isPlaying) togglePlay();
+            selectMouthLayer(layerId);
+            mouthScrubbing = true;
+            rowEl.setPointerCapture(e.pointerId);
+            goToFrame(frameFromClientX(e.clientX));
+          });
+          rowEl.addEventListener('pointermove', (e) => {
+            if (!mouthScrubbing) return;
+            const f = frameFromClientX(e.clientX);
+            if (f !== state.currentFrame) goToFrame(f);
+          });
+          const endMouthScrub = () => {
+            mouthScrubbing = false;
+          };
+          rowEl.addEventListener('pointerup', endMouthScrub);
+          rowEl.addEventListener('pointercancel', endMouthScrub);
+
+          rowEl.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (state.isPlaying) togglePlay();
+            selectMouthLayer(layerId);
+            contextMouthLayerId = layerId;
+            contextMouthFrame = frameFromClientX(e.clientX);
+            goToFrame(contextMouthFrame);
+            const curMl = activeScene().mouthLayers.find((m) => m.id === layerId);
+            mustEl<HTMLButtonElement>('ctxMouthDelete').disabled = !(curMl && curMl.keys.has(contextMouthFrame));
+            mouthContextMenu.style.display = 'flex';
+            const left = Math.min(window.innerWidth - 175, e.clientX);
+            const top = Math.min(window.innerHeight - 115, e.clientY);
+            mouthContextMenu.style.left = `${left}px`;
+            mouthContextMenu.style.top = `${top}px`;
+          });
+
+          const rightEl = document.createElement('div');
+          rightEl.className = 'track-right-cell mouth-track-right' + (state.showMouthTrack ? '' : ' hidden-track');
+          rightEl.onclick = () => selectMouthLayer(layerId);
+
+          layerLabelsContainer.appendChild(labelEl);
+          layerRowsContainer.appendChild(rowEl);
+          layerRightsContainer.appendChild(rightEl);
+          mouthTrackDomMap.set(layerId, {
+            layerId,
+            labelEl,
+            rowEl,
+            rightEl,
+            tagSpan,
+            tagTextSpan,
+            btnVis,
+            btnRemove,
+          });
+        }
+        renderedMouthLayerIds = mouthLayers.map((m) => m.id);
+      }
+
+      // Reorder DOM nodes inside unified layer containers to match target.layerOrder
+      const desiredOrder = [...target.layerOrder];
+      const desiredLabels = desiredOrder.map(getLayerLabelElement).filter((x): x is HTMLDivElement => Boolean(x));
+      const desiredRows = desiredOrder.map(getLayerRowElement).filter((x): x is HTMLDivElement => Boolean(x));
+      const desiredRights = desiredOrder.map(getLayerRightElement).filter((x): x is HTMLDivElement => Boolean(x));
+
+      const applyOrderIfNeeded = (container: HTMLElement, els: HTMLElement[]) => {
+        const cur = Array.from(container.children);
+        const matches = cur.length === els.length && cur.every((node, i) => node === els[i]);
+        if (!matches) {
+          for (const el of els) container.appendChild(el);
+        }
+      };
+
+      applyOrderIfNeeded(layerLabelsContainer, desiredLabels);
+      applyOrderIfNeeded(layerRowsContainer, desiredRows);
+      applyOrderIfNeeded(layerRightsContainer, desiredRights);
+    }
+
+    // Sync cel tracks
+    for (const trk of celTracks) {
+      const dom = celTrackDomMap.get(trk.id);
+      if (!dom) continue;
+      dom.btnVis.style.opacity = trk.visible ? '1' : '0.35';
+      dom.btnRemove.style.display = celTracks.length > 1 ? '' : 'none';
+      if (renamingLayerKey !== `cel:${trk.id}` && dom.tagTextSpan.textContent !== trk.name) {
+        dom.tagTextSpan.textContent = trk.name;
+      }
+    }
+
+    // Sync vector tracks
+    for (const trk of vecTracks) {
+      const dom = vectorTrackDomMap.get(trk.id);
+      if (!dom) continue;
+      dom.labelEl.classList.toggle('hidden-track', !state.showVectorTrack);
+      dom.rowEl.classList.toggle('hidden-track', !state.showVectorTrack);
+      dom.rightEl.classList.toggle('hidden-track', !state.showVectorTrack);
+      dom.btnVis.style.opacity = trk.visible ? '1' : '0.35';
+      dom.btnRemove.style.display = vecTracks.length > 1 ? '' : 'none';
+      if (renamingLayerKey !== `vector:${trk.id}` && dom.tagTextSpan.textContent !== trk.name) {
+        dom.tagTextSpan.textContent = trk.name;
+      }
+    }
+
+    // Sync background layers
+    for (const bg of bgLayers) {
+      const dom = bgTrackDomMap.get(bg.id);
+      if (!dom) continue;
+      dom.labelEl.classList.toggle('hidden-track', !state.showBgTrack);
+      dom.rowEl.classList.toggle('hidden-track', !state.showBgTrack);
+      dom.rightEl.classList.toggle('hidden-track', !state.showBgTrack);
+      dom.btnVis.style.opacity = bg.visible ? '1' : '0.35';
+      dom.btnRemove.style.display = bgLayers.length > 1 ? '' : 'none';
+      if (renamingLayerKey !== `bg:${bg.id}` && dom.tagTextSpan.textContent !== bg.trackName) {
+        dom.tagTextSpan.textContent = bg.trackName;
+      }
+      dom.spanBarEl.textContent = bg.hasInk
+        ? bg.name
+          ? `BG: ${bg.name}`
+          : `${bg.trackName} Artwork (Active)`
+        : `${bg.trackName} (Drop image here or click to draw)`;
+    }
+
+    // Sync mouth layers
+    for (const ml of mouthLayers) {
+      const dom = mouthTrackDomMap.get(ml.id);
+      if (!dom) continue;
+      dom.labelEl.classList.toggle('hidden-track', !state.showMouthTrack);
+      dom.rowEl.classList.toggle('hidden-track', !state.showMouthTrack);
+      dom.rightEl.classList.toggle('hidden-track', !state.showMouthTrack);
+      dom.btnVis.style.opacity = ml.visible ? '1' : '0.35';
+      dom.btnRemove.style.display = mouthLayers.length > 1 ? '' : 'none';
+      if (renamingLayerKey !== `mouth:${ml.id}` && dom.tagTextSpan.textContent !== ml.name) {
+        dom.tagTextSpan.textContent = ml.name;
+      }
+    }
+
+    // Sync indentation + child badges for all layers
+    for (const k of target.layerOrder) {
+      const lbl = getLayerLabelElement(k);
+      const rightEl = getLayerRightElement(k);
+      const depth = getLayerDepth(target, k);
+      if (lbl) {
+        lbl.style.paddingLeft = `${8 + depth * 14}px`;
+        lbl.classList.toggle('is-child-layer', depth > 0);
+      }
+      if (rightEl) {
+        rightEl.classList.toggle('is-child-right', depth > 0);
+      }
+    }
+  }
+
+  function addCelTrack(): void {
+    const target = activeTimelineTarget();
+    let idx = target.celTracks.length + 1;
+    while (target.celTracks.some((t) => t.name === `Bitmap ${idx}`)) idx++;
+    const trk = createCelTrack(`Bitmap ${idx}`, true);
+    target.celTracks.push(trk);
+    target.layerOrder.unshift(`cel:${trk.id}`);
+    target.activeCelTrackId = trk.id;
+    normalizeTargetHierarchy(target);
+    state.showCelLayer = true;
+    selectTimelineTrack('cel');
+    syncLayerTrackContainers();
+    updateTimelinePanelHeight();
+    renderTimeline();
+    renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+  }
+
+  function addChildCelTrack(parentKey: string): void {
+    const target = activeTimelineTarget();
+    normalizeTargetHierarchy(target);
+    if (!target.layerOrder.includes(parentKey)) return;
+
+    let idx = target.celTracks.length + 1;
+    while (target.celTracks.some((t) => t.name === `Bitmap ${idx}`)) idx++;
+    const trk = createCelTrack(`Bitmap ${idx}`, true);
+    const childKey = `cel:${trk.id}`;
+    target.celTracks.push(trk);
+
+    const pIdx = target.layerOrder.indexOf(parentKey);
+    let insertAt = pIdx + 1;
+    while (insertAt < target.layerOrder.length && isLayerDescendant(target, parentKey, target.layerOrder[insertAt])) {
+      insertAt++;
+    }
+    target.layerOrder.splice(insertAt, 0, childKey);
+    target.layerParents[childKey] = parentKey;
+    target.activeCelTrackId = trk.id;
+    normalizeTargetHierarchy(target);
+
+    state.showCelLayer = true;
+    selectTimelineTrack('cel');
+    syncLayerTrackContainers();
+    updateTimelinePanelHeight();
+    renderTimeline();
+    renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+    onNotify(`Added child bitmap layer under ${getLayerDisplayName(target, parentKey)}.`);
+  }
+
+  function removeCelTrack(trackId: string): void {
+    const rootSc = activeScene();
+    const target = activeTimelineTarget();
+    if (target.celTracks.length <= 1) return;
+    const idx = target.celTracks.findIndex((t) => t.id === trackId);
+    if (idx < 0) return;
+
+    const removedKey = `cel:${trackId}`;
+    const grandParent = target.layerParents?.[removedKey] || null;
+    for (const k of [...target.layerOrder]) {
+      if (target.layerParents?.[k] === removedKey) {
+        setLayerParentKeepWorld(rootSc, target, k, grandParent, state.currentFrame);
+      }
+    }
+    delete target.layerParents[removedKey];
+    target.layerOrder = target.layerOrder.filter((k) => k !== removedKey);
+
+    target.celTracks.splice(idx, 1);
+    if (target.activeCelTrackId === trackId) {
+      target.activeCelTrackId = target.celTracks[Math.max(0, idx - 1)].id;
+    }
+    normalizeTargetHierarchy(target);
+    syncLayerTrackContainers();
+    updateActiveTrackHighlight();
+    updateStageBadge();
+    updateTimelinePanelHeight();
+    renderTimeline();
+    renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+  }
+
+  function selectCelTrack(trackId: string): void {
+    const target = activeTimelineTarget();
+    if (target.celTracks.some((t) => t.id === trackId)) {
+      target.activeCelTrackId = trackId;
+    }
+    selectTimelineTrack('cel');
+  }
+
+  function addVectorTrack(): void {
+    const target = activeTimelineTarget();
+    let idx = target.vectorTracks.length + 1;
+    while (target.vectorTracks.some((t) => t.name === `Vector ${idx}`)) idx++;
+    const trk = createVectorTrack(`Vector ${idx}`, true);
+    target.vectorTracks.push(trk);
+    target.layerOrder.unshift(`vector:${trk.id}`);
+    target.activeVectorTrackId = trk.id;
+    normalizeTargetHierarchy(target);
+    if (!state.showVectorTrack) {
+      toggleVectorTrack(true);
+    }
+    state.showVectorLayer = true;
+    selectTimelineTrack('vector');
+    syncLayerTrackContainers();
+    updateTimelinePanelHeight();
+    renderTimeline();
+    renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+  }
+
+  function addChildVectorTrack(parentKey: string): void {
+    const target = activeTimelineTarget();
+    normalizeTargetHierarchy(target);
+    if (!target.layerOrder.includes(parentKey)) return;
+
+    let idx = target.vectorTracks.length + 1;
+    while (target.vectorTracks.some((t) => t.name === `Vector ${idx}`)) idx++;
+    const trk = createVectorTrack(`Vector ${idx}`, true);
+    const childKey = `vector:${trk.id}`;
+    target.vectorTracks.push(trk);
+
+    const pIdx = target.layerOrder.indexOf(parentKey);
+    let insertAt = pIdx + 1;
+    while (insertAt < target.layerOrder.length && isLayerDescendant(target, parentKey, target.layerOrder[insertAt])) {
+      insertAt++;
+    }
+    target.layerOrder.splice(insertAt, 0, childKey);
+    target.layerParents[childKey] = parentKey;
+    target.activeVectorTrackId = trk.id;
+    normalizeTargetHierarchy(target);
+
+    if (!state.showVectorTrack) {
+      toggleVectorTrack(true);
+    }
+    state.showVectorLayer = true;
+    selectTimelineTrack('vector');
+    syncLayerTrackContainers();
+    updateTimelinePanelHeight();
+    renderTimeline();
+    renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+    onNotify(`Added child layer under ${getLayerDisplayName(target, parentKey)}.`);
+  }
+
+  function removeVectorTrack(trackId: string): void {
+    const rootSc = activeScene();
+    const target = activeTimelineTarget();
+    if (target.vectorTracks.length <= 1) return;
+    const idx = target.vectorTracks.findIndex((t) => t.id === trackId);
+    if (idx < 0) return;
+
+    const removedKey = `vector:${trackId}`;
+    const grandParent = target.layerParents?.[removedKey] || null;
+    for (const k of [...target.layerOrder]) {
+      if (target.layerParents?.[k] === removedKey) {
+        setLayerParentKeepWorld(rootSc, target, k, grandParent, state.currentFrame);
+      }
+    }
+    delete target.layerParents[removedKey];
+    target.layerOrder = target.layerOrder.filter((k) => k !== removedKey);
+
+    target.vectorTracks.splice(idx, 1);
+    if (target.activeVectorTrackId === trackId) {
+      target.activeVectorTrackId = target.vectorTracks[Math.max(0, idx - 1)].id;
+    }
+    normalizeTargetHierarchy(target);
+    syncLayerTrackContainers();
+    updateActiveTrackHighlight();
+    updateStageBadge();
+    updateTimelinePanelHeight();
+    renderTimeline();
+    renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+  }
+
+  function selectVectorTrack(trackId: string): void {
+    const target = activeTimelineTarget();
+    if (target.vectorTracks.some((t) => t.id === trackId)) {
+      target.activeVectorTrackId = trackId;
+    }
+    selectTimelineTrack('vector');
+  }
+
+  function addBgTrack(): void {
+    if (nestStack.length > 0) return;
+    const sc = activeScene();
+    let idx = sc.bgLayers.length + 1;
+    while (sc.bgLayers.some((b) => b.trackName === `Background ${idx}`)) idx++;
+    const bg = createBgLayer(`Background ${idx}`, true);
+    sc.bgLayers.push(bg);
+    sc.layerOrder.push(`bg:${bg.id}`);
+    sc.activeBgLayerId = bg.id;
+    normalizeTargetHierarchy(sc);
+    if (!state.showBgTrack) toggleBgTrack(true);
+    selectTimelineTrack('bg');
+    syncLayerTrackContainers();
+    updateTimelinePanelHeight();
+    renderTimeline();
+    renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+  }
+
+  function removeBgTrack(layerId: string): void {
+    const sc = activeScene();
+    if (sc.bgLayers.length <= 1) return;
+    const idx = sc.bgLayers.findIndex((b) => b.id === layerId);
+    if (idx < 0) return;
+
+    const removedKey = `bg:${layerId}`;
+    const grandParent = sc.layerParents?.[removedKey] || null;
+    for (const k of [...sc.layerOrder]) {
+      if (sc.layerParents?.[k] === removedKey) {
+        setLayerParentKeepWorld(sc, sc, k, grandParent, state.currentFrame);
+      }
+    }
+    delete sc.layerParents[removedKey];
+    sc.layerOrder = sc.layerOrder.filter((k) => k !== removedKey);
+
+    sc.bgLayers.splice(idx, 1);
+    if (sc.activeBgLayerId === layerId) {
+      sc.activeBgLayerId = sc.bgLayers[Math.max(0, idx - 1)].id;
+    }
+    normalizeTargetHierarchy(sc);
+    syncLayerTrackContainers();
+    updateActiveTrackHighlight();
+    updateStageBadge();
+    updateTimelinePanelHeight();
+    renderTimeline();
+    renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+  }
+
+  function selectBgLayer(layerId: string): void {
+    const sc = activeScene();
+    if (sc.bgLayers.some((b) => b.id === layerId)) {
+      sc.activeBgLayerId = layerId;
+    }
+    selectTimelineTrack('bg');
+  }
+
+  function addMouthTrack(): void {
+    if (nestStack.length > 0) return;
+    const sc = activeScene();
+    let idx = sc.mouthLayers.length + 1;
+    while (sc.mouthLayers.some((m) => m.name === `Mouth ${idx}`)) idx++;
+    const ml = createMouthLayer(`Mouth ${idx}`, true);
+    ensureMouthInitInScene(sc, ml);
+    sc.mouthLayers.push(ml);
+    sc.layerOrder.unshift(`mouth:${ml.id}`);
+    sc.activeMouthLayerId = ml.id;
+    normalizeTargetHierarchy(sc);
+    if (!state.showMouthTrack) toggleMouthTrack(true);
+    selectTimelineTrack('mouth');
+    syncLayerTrackContainers();
+    updateMouthWidget();
+    updateTimelinePanelHeight();
+    renderTimeline();
+    renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+  }
+
+  function removeMouthTrack(layerId: string): void {
+    const sc = activeScene();
+    if (sc.mouthLayers.length <= 1) return;
+    const idx = sc.mouthLayers.findIndex((m) => m.id === layerId);
+    if (idx < 0) return;
+
+    const removedKey = `mouth:${layerId}`;
+    const grandParent = sc.layerParents?.[removedKey] || null;
+    for (const k of [...sc.layerOrder]) {
+      if (sc.layerParents?.[k] === removedKey) {
+        setLayerParentKeepWorld(sc, sc, k, grandParent, state.currentFrame);
+      }
+    }
+    delete sc.layerParents[removedKey];
+    sc.layerOrder = sc.layerOrder.filter((k) => k !== removedKey);
+
+    sc.mouthLayers.splice(idx, 1);
+    if (sc.activeMouthLayerId === layerId) {
+      sc.activeMouthLayerId = sc.mouthLayers[Math.max(0, idx - 1)].id;
+    }
+    normalizeTargetHierarchy(sc);
+    syncLayerTrackContainers();
+    updateMouthWidget();
+    updateActiveTrackHighlight();
+    updateStageBadge();
+    updateTimelinePanelHeight();
+    renderTimeline();
+    renderStage();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+  }
+
+  function selectMouthLayer(layerId: string): void {
+    const sc = activeScene();
+    if (sc.mouthLayers.some((m) => m.id === layerId)) {
+      sc.activeMouthLayerId = layerId;
+    }
+    selectTimelineTrack('mouth');
+  }
+
+  btnAddCelTrack.onclick = () => addCelTrack();
+  btnAddVectorTrack.onclick = () => addVectorTrack();
+  btnAddMouthTrack.onclick = () => addMouthTrack();
+  btnAddBgTrack.onclick = () => addBgTrack();
+
+  ctxLayerAddChildVec.onclick = () => {
+    const key = contextMenuLayerKey;
+    hideMenus();
+    if (key) addChildVectorTrack(key);
+  };
+  ctxLayerAddChildCel.onclick = () => {
+    const key = contextMenuLayerKey;
+    hideMenus();
+    if (key) addChildCelTrack(key);
+  };
+  ctxLayerJoinAbove.onclick = () => {
+    const key = contextMenuLayerKey;
+    hideMenus();
+    if (!key) return;
+    const target = activeTimelineTarget();
+    const above = getNearestVisibleLayerAbove(target, key);
+    if (!above || isLayerDescendant(target, key, above)) return;
+    if (setLayerParentKeepWorld(activeScene(), target, key, above, state.currentFrame)) {
+      syncLayerTrackContainers();
+      updateActiveTrackHighlight();
+      renderTimeline();
+      renderStage();
+      onNotify(`${getLayerDisplayName(target, key)} joined as child of ${getLayerDisplayName(target, above)}.`);
+    }
+  };
+  ctxLayerDetach.onclick = () => {
+    const key = contextMenuLayerKey;
+    hideMenus();
+    if (!key) return;
+    const target = activeTimelineTarget();
+    if (!target.layerParents?.[key]) return;
+    setLayerParentKeepWorld(activeScene(), target, key, null, state.currentFrame);
+    syncLayerTrackContainers();
+    updateActiveTrackHighlight();
+    renderTimeline();
+    renderStage();
+    onNotify(`${getLayerDisplayName(target, key)} detached from parent.`);
+  };
+  ctxLayerRename.onclick = () => {
+    const key = contextMenuLayerKey;
+    hideMenus();
+    if (key) startLayerRename(key);
+  };
+  ctxLayerClear.onclick = () => {
+    const key = contextMenuLayerKey;
+    hideMenus();
+    if (!key || !key.startsWith('bg:')) return;
+    const bg = activeScene().bgLayers.find((b) => b.id === key.slice(3));
+    if (!bg) return;
+    pushPixelUndo(bg);
+    bg.canvas = createCelCanvas();
+    bg.offsetX = 0;
+    bg.offsetY = 0;
+    bg.hasInk = false;
+    bg.name = '';
+    updateBgUI();
+    renderStage();
+  };
+  ctxLayerDelete.onclick = () => {
+    const key = contextMenuLayerKey;
+    hideMenus();
+    if (!key) return;
+    if (key.startsWith('vector:')) removeVectorTrack(key.slice(7));
+    else if (key.startsWith('cel:')) removeCelTrack(key.slice(4));
+    else if (key.startsWith('bg:')) removeBgTrack(key.slice(3));
+    else if (key.startsWith('mouth:')) removeMouthTrack(key.slice(6));
+  };
+
   function toggleVectorTrack(forceState?: boolean): void {
     state.showVectorTrack = typeof forceState === 'boolean' ? forceState : !state.showVectorTrack;
     const btn = mustEl<HTMLButtonElement>('btnToggleVectorTrack');
     btn.classList.toggle('active', state.showVectorTrack);
-    vectorTrackLabel.classList.toggle('hidden-track', !state.showVectorTrack);
-    vectorTrackRow.classList.toggle('hidden-track', !state.showVectorTrack);
-    vectorTrackRight.classList.toggle('hidden-track', !state.showVectorTrack);
+    btnAddVectorTrack.classList.toggle('hidden-nest-ui', !state.showVectorTrack);
+    syncLayerTrackContainers();
     if (state.showVectorTrack) {
-      if (!state.showVectorLayer) {
-        state.showVectorLayer = true;
-        mustEl<HTMLButtonElement>('btnVisVector').style.opacity = '1';
-      }
+      state.showVectorLayer = true;
+      const curTrk = state.activeVectorTrack;
+      if (!curTrk.visible) curTrk.visible = true;
       if (typeof forceState !== 'boolean') {
         selectTimelineTrack('vector');
       }
     } else if (state.activeLayer === 'vector') {
       setActiveLayer('cel');
     }
+    syncLayerTrackContainers();
+    updateActiveTrackHighlight();
     updateTimelinePanelHeight();
     renderStage();
     requestAnimationFrame(() => {
@@ -3682,9 +8162,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     state.showBgTrack = typeof forceState === 'boolean' ? forceState : !state.showBgTrack;
     const btn = mustEl<HTMLButtonElement>('btnToggleBgTrack');
     btn.classList.toggle('active', state.showBgTrack);
-    bgTrackLabel.classList.toggle('hidden-track', !state.showBgTrack);
-    bgTrackRow.classList.toggle('hidden-track', !state.showBgTrack);
-    bgTrackRight.classList.toggle('hidden-track', !state.showBgTrack);
+    btnAddBgTrack.classList.toggle('hidden-nest-ui', !state.showBgTrack || nestStack.length > 0);
+    syncLayerTrackContainers();
     if (state.showBgTrack) {
       state.bgLayer.visible = true;
       if (typeof forceState !== 'boolean') {
@@ -3694,7 +8173,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       setActiveLayer('cel');
     }
     updateBgUI();
+    updateActiveTrackHighlight();
     updateTimelinePanelHeight();
+    renderStage();
     requestAnimationFrame(() => {
       resizeStageCanvas();
       renderAudioTrack();
@@ -3702,31 +8183,59 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   function updateActiveTrackHighlight(): void {
+    syncLayerTrackContainers();
+    syncAudioTrackContainers();
     const active = state.selectedTrack;
-    audioClipBox.classList.toggle('selected', active === 'audio');
+    const target = activeTimelineTarget();
+    const sc = activeScene();
+    const activeCelId = target.activeCelTrackId;
+    const activeVecId = target.activeVectorTrackId;
+    const activeBgId = sc.activeBgLayerId;
+    const activeMouthId = sc.activeMouthLayerId;
+    const activeAudId = sc.activeAudioTrackId;
 
-    celTrackLabel.classList.toggle('active-draw-layer', active === 'cel');
-    vectorTrackLabel.classList.toggle('active-draw-layer', active === 'vector');
-    bgTrackLabel.classList.toggle('active-draw-layer', active === 'bg');
-    mouthTrackLabel.classList.toggle('active-draw-layer', active === 'mouth');
-    audioTrackLabel.classList.toggle('active-draw-layer', active === 'audio');
+    for (const dom of celTrackDomMap.values()) {
+      const isAct = active === 'cel' && dom.trackId === activeCelId;
+      dom.labelEl.classList.toggle('active-draw-layer', isAct);
+      dom.rowEl.classList.toggle('active-track-row', isAct);
+      dom.rightEl.classList.toggle('active-track-right', isAct);
+    }
+
+    for (const dom of vectorTrackDomMap.values()) {
+      const isActVec = active === 'vector' && dom.trackId === activeVecId;
+      dom.labelEl.classList.toggle('active-draw-layer', isActVec);
+      dom.rowEl.classList.toggle('active-track-row', isActVec);
+      dom.rightEl.classList.toggle('active-track-right', isActVec);
+    }
+
+    for (const dom of bgTrackDomMap.values()) {
+      const isActBg = active === 'bg' && dom.layerId === activeBgId;
+      dom.labelEl.classList.toggle('active-draw-layer', isActBg);
+      dom.rowEl.classList.toggle('active-track-row', isActBg);
+      dom.rightEl.classList.toggle('active-track-right', isActBg);
+    }
+
+    for (const dom of mouthTrackDomMap.values()) {
+      const isActMouth = active === 'mouth' && dom.layerId === activeMouthId;
+      dom.labelEl.classList.toggle('active-draw-layer', isActMouth);
+      dom.rowEl.classList.toggle('active-track-row', isActMouth);
+      dom.rightEl.classList.toggle('active-track-right', isActMouth);
+    }
+
+    for (const dom of audioTrackDomMap.values()) {
+      const isActAud = active === 'audio' && dom.trackId === activeAudId;
+      dom.labelEl.classList.toggle('active-draw-layer', isActAud);
+      dom.rowEl.classList.toggle('active-track-row', isActAud);
+      dom.rightEl.classList.toggle('active-track-right', isActAud);
+      dom.clipBoxEl.classList.toggle('selected', isActAud);
+    }
+
     camTrackLabel.classList.toggle('active-draw-layer', active === 'cam');
-
-    celTrackRow.classList.toggle('active-track-row', active === 'cel');
-    vectorTrackRow.classList.toggle('active-track-row', active === 'vector');
-    bgTrackRow.classList.toggle('active-track-row', active === 'bg');
-    mouthTrackRow.classList.toggle('active-track-row', active === 'mouth');
-    audioTrackRow.classList.toggle('active-track-row', active === 'audio');
     camTrackRow.classList.toggle('active-track-row', active === 'cam');
-
-    celTrackRight.classList.toggle('active-track-right', active === 'cel');
-    vectorTrackRight.classList.toggle('active-track-right', active === 'vector');
-    bgTrackRight.classList.toggle('active-track-right', active === 'bg');
-    mouthTrackRight.classList.toggle('active-track-right', active === 'mouth');
-    audioTrackRight.classList.toggle('active-track-right', active === 'audio');
     camTrackRight.classList.toggle('active-track-right', active === 'cam');
 
     btnToolNudge.classList.toggle('hidden-tool', state.activeLayer !== 'vector' && state.activeLayer !== 'cel');
+    btnVectorPixelPreview.classList.toggle('hidden-nest-ui', state.activeLayer !== 'vector');
   }
 
   function selectTimelineTrack(track: 'cel' | 'vector' | 'bg' | 'mouth' | 'audio' | 'cam'): void {
@@ -3742,6 +8251,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     }
     updateActiveTrackHighlight();
     updateMouthWidget();
+    updateAudioVolumeUI();
     updateStageBadge();
     renderStage();
   }
@@ -3751,72 +8261,29 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   function updateBgUI(): void {
-    mustEl<HTMLButtonElement>('btnVisBg').style.opacity = state.bgLayer.visible ? '1' : '0.35';
-    if (state.bgLayer.hasInk) {
-      bgSpanBar.textContent = state.bgLayer.name ? `BG: ${state.bgLayer.name}` : 'BG Artwork (Active)';
-    } else {
-      bgSpanBar.textContent = 'Background Layer (Drop image here or click to draw)';
-    }
+    syncLayerTrackContainers();
   }
 
   mustEl<HTMLButtonElement>('btnToggleBgTrack').onclick = () => {
     if (nestStack.length === 0) toggleBgTrack();
   };
-  celTrackLabel.onclick = (e) => {
-    if ((e.target as HTMLElement)?.closest('button, input, select')) return;
-    setActiveLayer('cel');
-  };
-  vectorTrackLabel.onclick = (e) => {
-    if ((e.target as HTMLElement)?.closest('button, input, select')) return;
-    setActiveLayer('vector');
-  };
-  bgTrackLabel.onclick = (e) => {
-    if ((e.target as HTMLElement)?.closest('button, input, select')) return;
-    setActiveLayer('bg');
-  };
-  bgTrackRow.onclick = () => setActiveLayer('bg');
-  celTrackRight.onclick = () => selectTimelineTrack('cel');
-  vectorTrackRight.onclick = () => selectTimelineTrack('vector');
-  bgTrackRight.onclick = () => selectTimelineTrack('bg');
-  mouthTrackRight.onclick = () => selectTimelineTrack('mouth');
-  audioTrackRight.onclick = () => selectTimelineTrack('audio');
   camTrackRight.onclick = () => selectTimelineTrack('cam');
 
-  mustEl<HTMLButtonElement>('btnVisBg').onclick = (e) => {
-    e.stopPropagation();
-    state.bgLayer.visible = !state.bgLayer.visible;
-    updateBgUI();
-    renderStage();
-  };
-
-  mustEl<HTMLButtonElement>('btnClearBg').onclick = (e) => {
-    e.stopPropagation();
-    pushPixelUndo(state.bgLayer);
-    state.bgLayer.canvas = createCelCanvas();
-    state.bgLayer.offsetX = 0;
-    state.bgLayer.offsetY = 0;
-    state.bgLayer.hasInk = false;
-    state.bgLayer.name = '';
-    updateBgUI();
-    renderStage();
-  };
-
   const bgFileInput = mustEl<HTMLInputElement>('bgFileInput');
-  mustEl<HTMLButtonElement>('btnAddBgImg').onclick = (e) => {
-    e.stopPropagation();
-    bgFileInput.click();
-  };
   bgFileInput.onchange = () => {
-    if (bgFileInput.files && bgFileInput.files[0]) loadImageFile(bgFileInput.files[0], 'bg');
+    if (bgFileInput.files && bgFileInput.files[0]) {
+      loadImageFile(bgFileInput.files[0], 'bg', state.currentFrame, pendingBgUploadId || undefined);
+    }
+    pendingBgUploadId = null;
     bgFileInput.value = '';
   };
 
   // ==========================================
-  // Web Audio Track + Live Mic Waveform Preview + Delete
+  // Multi-Track Web Audio + Live Mic Waveform Preview + Delete
   // ==========================================
   let audioCtx: AudioContext | null = null;
   let activeAudioSources: AudioBufferSourceNode[] = [];
-  let activeAudioGainNodes: GainNode[] = [];
+  let activeAudioGainNodes: Array<{ gain: GainNode; trackId: string }> = [];
   let activeScrubSource: AudioBufferSourceNode | null = null;
   let lastScrubTime = 0;
 
@@ -3829,6 +8296,39 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   let micPreviewRaf: number | null = null;
   let micStartTimestamp = 0;
   let micLivePeaks: number[] = [];
+  let activeRecAudioTrackId: string | null = null;
+  let contextAudioTrackId: string | null = null;
+
+  interface AudioTrackDom {
+    trackId: string;
+    labelEl: HTMLDivElement;
+    rowEl: HTMLDivElement;
+    rightEl: HTMLDivElement;
+    volFillEl: HTMLDivElement;
+    tagSpan: HTMLSpanElement;
+    tagTextSpan: HTMLSpanElement;
+    btnAdd: HTMLButtonElement;
+    btnRec: HTMLButtonElement;
+    btnMute: HTMLButtonElement;
+    btnRemove: HTMLButtonElement;
+    waveCanvas: HTMLCanvasElement;
+    emptyHintEl: HTMLDivElement;
+    recBadgeEl: HTMLDivElement;
+    clipBoxEl: HTMLDivElement;
+    clipLabelEl: HTMLDivElement;
+  }
+
+  let renderedAudioTrackIds: string[] = [];
+  const audioTrackDomMap = new Map<string, AudioTrackDom>();
+
+  let audioDragState: {
+    trackId: string;
+    mode: string;
+    startX: number;
+    origTimelineStart: number;
+    origTrimStart: number;
+    origTrimEnd: number;
+  } | null = null;
 
   function getAudioContext(): AudioContext {
     if (!audioCtx) {
@@ -3843,25 +8343,36 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     return audioCtx;
   }
 
-  function getEffectiveAudioVolume(): number {
-    if (state.audio) {
-      return state.audio.muted ? 0 : Math.max(0, Math.min(1, state.audio.volume));
+  function getAudioTrackEffectiveVolume(trk: AudioTrack): number {
+    if (trk.clip) {
+      return trk.clip.muted || trk.muted ? 0 : Math.max(0, Math.min(1, trk.clip.volume));
     }
-    return Math.max(0, Math.min(1, state.audioVolume));
+    return trk.muted ? 0 : Math.max(0, Math.min(1, trk.volume));
+  }
+
+  function getEffectiveAudioVolume(trk?: AudioTrack): number {
+    return getAudioTrackEffectiveVolume(trk || state.activeAudioTrack);
   }
 
   function updateAudioVolumeUI(): void {
-    const vol = getEffectiveAudioVolume();
-    const pct = Math.round(vol * 100);
-    audioVolFill.style.width = `${pct}%`;
-    audioVolFill.classList.toggle('empty', pct <= 0);
-    audioVolFill.classList.toggle('full', pct >= 100);
-    audioTrackLabel.title = `Scroll wheel here to adjust Audio volume (${pct}%)`;
-    mustEl<HTMLButtonElement>('btnMuteAudio').textContent =
-      state.audio?.muted || pct === 0 ? '🔇' : '🔊';
-    for (const g of activeAudioGainNodes) {
+    const sc = activeScene();
+    for (const trk of sc.audioTracks) {
+      const dom = audioTrackDomMap.get(trk.id);
+      if (dom) {
+        const vol = getAudioTrackEffectiveVolume(trk);
+        const pct = Math.round(vol * 100);
+        dom.volFillEl.style.width = `${pct}%`;
+        dom.volFillEl.classList.toggle('empty', pct <= 0);
+        dom.volFillEl.classList.toggle('full', pct >= 100);
+        dom.labelEl.title = `Scroll wheel here to adjust ${trk.name} volume (${pct}%)`;
+        dom.btnMute.textContent = trk.clip?.muted || trk.muted || pct === 0 ? '🔇' : '🔊';
+      }
+    }
+    for (const item of activeAudioGainNodes) {
+      const trk = sc.audioTracks.find((t) => t.id === item.trackId);
+      const vol = trk ? getAudioTrackEffectiveVolume(trk) : 0;
       try {
-        g.gain.value = vol;
+        item.gain.gain.value = vol;
       } catch {
         // ignore
       }
@@ -3881,9 +8392,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         // ignore
       }
     }
-    for (const g of activeAudioGainNodes) {
+    for (const item of activeAudioGainNodes) {
       try {
-        g.disconnect();
+        item.gain.disconnect();
       } catch {
         // ignore
       }
@@ -3894,46 +8405,54 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   function scheduleAudioAtFrame(frame: number): void {
     stopAllAudioPlayback();
-    if (nestStack.length > 0 || !state.audio || state.audio.muted) return;
+    if (nestStack.length > 0) return;
 
-    const ac = getAudioContext();
-    const { buffer, timelineStartSec, trimStartSec, trimEndSec } = state.audio;
+    const sc = activeScene();
     const playheadSec = frame / state.fps;
-    const clipDur = trimEndSec - trimStartSec;
-    const clipStart = timelineStartSec;
-    const clipEnd = timelineStartSec + clipDur;
+    let ac: AudioContext | null = null;
 
-    if (playheadSec >= clipEnd) return;
+    for (const trk of sc.audioTracks) {
+      const clip = trk.clip;
+      if (!clip || clip.muted || trk.muted) continue;
+      const clipDur = clip.trimEndSec - clip.trimStartSec;
+      const clipStart = clip.timelineStartSec;
+      const clipEnd = clipStart + clipDur;
+      if (playheadSec >= clipEnd || clipDur <= 0) continue;
 
-    const src = ac.createBufferSource();
-    src.buffer = buffer;
-    const gain = ac.createGain();
-    gain.gain.value = getEffectiveAudioVolume();
-    src.connect(gain);
-    gain.connect(ac.destination);
+      if (!ac) ac = getAudioContext();
+      const src = ac.createBufferSource();
+      src.buffer = clip.buffer;
+      const gain = ac.createGain();
+      gain.gain.value = getAudioTrackEffectiveVolume(trk);
+      src.connect(gain);
+      gain.connect(ac.destination);
 
-    if (playheadSec >= clipStart) {
-      const intoClip = playheadSec - clipStart;
-      const remaining = clipEnd - playheadSec;
-      src.start(ac.currentTime, trimStartSec + intoClip, remaining);
-    } else {
-      const delay = clipStart - playheadSec;
-      src.start(ac.currentTime + delay, trimStartSec, clipDur);
+      if (playheadSec >= clipStart) {
+        const intoClip = playheadSec - clipStart;
+        const remaining = clipEnd - playheadSec;
+        src.start(ac.currentTime, clip.trimStartSec + intoClip, remaining);
+      } else {
+        const delay = clipStart - playheadSec;
+        src.start(ac.currentTime + delay, clip.trimStartSec, clipDur);
+      }
+      activeAudioSources.push(src);
+      activeAudioGainNodes.push({ gain, trackId: trk.id });
     }
-    activeAudioSources.push(src);
-    activeAudioGainNodes.push(gain);
   }
 
   function playAudioScrubGrain(frame: number): void {
-    if (nestStack.length > 0 || !state.audio || state.audio.muted) return;
-    const vol = getEffectiveAudioVolume();
+    if (nestStack.length > 0) return;
+    const trk = state.activeAudioTrack;
+    const clip = trk.clip;
+    if (!clip || clip.muted || trk.muted) return;
+    const vol = getAudioTrackEffectiveVolume(trk);
     if (vol <= 0.001) return;
     const now = performance.now();
     if (now - lastScrubTime < 55) return;
     lastScrubTime = now;
 
     const ac = getAudioContext();
-    const { buffer, timelineStartSec, trimStartSec, trimEndSec } = state.audio;
+    const { buffer, timelineStartSec, trimStartSec, trimEndSec } = clip;
     const playheadSec = frame / state.fps;
     const clipEnd = timelineStartSec + (trimEndSec - trimStartSec);
 
@@ -3978,18 +8497,449 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     return peaks;
   }
 
+  function selectAudioTrack(trackId: string): void {
+    const sc = activeScene();
+    if (sc.audioTracks.some((t) => t.id === trackId)) {
+      sc.activeAudioTrackId = trackId;
+    }
+    selectTimelineTrack('audio');
+  }
+
+  function addAudioTrack(): void {
+    if (nestStack.length > 0) return;
+    const sc = activeScene();
+    let idx = sc.audioTracks.length + 1;
+    while (sc.audioTracks.some((t) => t.name === `Audio ${idx}`)) idx++;
+    const trk = createAudioTrack(`Audio ${idx}`);
+    sc.audioTracks.push(trk);
+    sc.activeAudioTrackId = trk.id;
+    if (!state.showAudioTrack) toggleAudioTrack(true);
+    selectTimelineTrack('audio');
+    syncAudioTrackContainers();
+    updateAudioVolumeUI();
+    updateTimelinePanelHeight();
+    renderAudioTrack();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+  }
+
+  function removeAudioTrack(trackId: string): void {
+    const sc = activeScene();
+    if (sc.audioTracks.length <= 1) return;
+    const idx = sc.audioTracks.findIndex((t) => t.id === trackId);
+    if (idx < 0) return;
+    if (activeRecAudioTrackId === trackId && micRecorder && micRecorder.state === 'recording') {
+      micRecorder.stop();
+    }
+    stopAllAudioPlayback();
+    sc.audioTracks.splice(idx, 1);
+    if (sc.activeAudioTrackId === trackId) {
+      sc.activeAudioTrackId = sc.audioTracks[Math.max(0, idx - 1)].id;
+    }
+    syncAudioTrackContainers();
+    updateActiveTrackHighlight();
+    updateAudioVolumeUI();
+    updateTimelinePanelHeight();
+    if (state.isPlaying) scheduleAudioAtFrame(state.currentFrame);
+    renderAudioTrack();
+    requestAnimationFrame(() => {
+      resizeStageCanvas();
+      renderAudioTrack();
+    });
+  }
+
+  async function startRecordingOnTrack(trackId: string): Promise<void> {
+    if (micRecorder && micRecorder.state === 'recording') {
+      micRecorder.stop();
+      return;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      onNotify('Microphone recording is not supported in this browser.');
+      return;
+    }
+
+    selectAudioTrack(trackId);
+
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micChunks = [];
+      micStartFrame = state.currentFrame;
+      activeRecAudioTrackId = trackId;
+
+      const recorder = new MediaRecorder(micStream);
+      micRecorder = recorder;
+      recorder.ondataavailable = (ev) => {
+        if (ev.data.size > 0) micChunks.push(ev.data);
+      };
+
+      recorder.onstop = async () => {
+        const recTrackId = activeRecAudioTrackId || trackId;
+        stopLiveRecPreview();
+        activeRecAudioTrackId = null;
+        const dom = audioTrackDomMap.get(recTrackId);
+        if (dom) {
+          dom.btnRec.textContent = '● Rec';
+          dom.btnRec.classList.remove('recording');
+        }
+
+        if (micStream) {
+          micStream.getTracks().forEach((t) => t.stop());
+          micStream = null;
+        }
+
+        if (micChunks.length > 0) {
+          const blob = new Blob(micChunks, { type: recorder.mimeType || 'audio/webm' });
+          const ac = getAudioContext();
+          const buf = await blob.arrayBuffer();
+          const decoded = await ac.decodeAudioData(buf);
+          await setDecodedAudioBuffer(decoded, 'Mic Recording', micStartFrame, recTrackId);
+        } else {
+          renderAudioTrack();
+        }
+        micRecorder = null;
+      };
+
+      recorder.start();
+      const dom = audioTrackDomMap.get(trackId);
+      if (dom) {
+        dom.btnRec.textContent = '■ Stop';
+        dom.btnRec.classList.add('recording');
+      }
+      startLiveRecPreview(micStream, trackId);
+    } catch (err) {
+      activeRecAudioTrackId = null;
+      const msg = err instanceof Error ? err.message : String(err);
+      onNotify('Could not access microphone: ' + msg);
+    }
+  }
+
+  function syncAudioTrackContainers(): void {
+    const sc = activeScene();
+    if (sc.audioTracks.length === 0) getActiveAudioTrackInScene(sc);
+    const tracks = sc.audioTracks;
+
+    if (!audioDragState) {
+      const idSet = new Set(tracks.map((t) => t.id));
+      const idsMatch =
+        renderedAudioTrackIds.length === tracks.length &&
+        tracks.every((t, i) => renderedAudioTrackIds[i] === t.id && audioTrackDomMap.has(t.id));
+
+      if (!idsMatch) {
+        for (const [oldId, dom] of audioTrackDomMap.entries()) {
+          if (!idSet.has(oldId)) {
+            dom.labelEl.remove();
+            dom.rowEl.remove();
+            dom.rightEl.remove();
+            audioTrackDomMap.delete(oldId);
+          }
+        }
+        for (const trk of tracks) {
+          if (audioTrackDomMap.has(trk.id)) continue;
+          const trackId = trk.id;
+
+          const labelEl = document.createElement('div');
+          labelEl.className = 'track-label audio-track-label' + (state.showAudioTrack ? '' : ' hidden-track');
+          labelEl.title = `Scroll wheel here to adjust ${trk.name} volume`;
+
+          const volFillEl = document.createElement('div');
+          volFillEl.className = 'audio-vol-fill full';
+
+          const { tagSpan, tagTextSpan } = createLayerTagDom(
+            'bg-[#c084fc]',
+            trk.name,
+            `Audio Track (${trk.name})`
+          );
+
+          const btnGroup = document.createElement('div');
+          btnGroup.className = 'flex gap-[3px] shrink-0';
+
+          const btnAdd = document.createElement('button');
+          btnAdd.type = 'button';
+          btnAdd.className = 'mini-btn';
+          btnAdd.textContent = '+';
+          btnAdd.title = 'Add Audio Track';
+          btnAdd.onclick = (e) => {
+            e.stopPropagation();
+            addAudioTrack();
+          };
+
+          const btnRec = document.createElement('button');
+          btnRec.type = 'button';
+          btnRec.className = 'mini-btn rec-btn';
+          btnRec.textContent = '● Rec';
+          btnRec.title = `Record Microphone onto ${trk.name}`;
+          btnRec.onclick = (e) => {
+            e.stopPropagation();
+            void startRecordingOnTrack(trackId);
+          };
+
+          const btnMute = document.createElement('button');
+          btnMute.type = 'button';
+          btnMute.className = 'mini-btn';
+          btnMute.textContent = '🔊';
+          btnMute.title = 'Mute/Unmute Track';
+          btnMute.onclick = (e) => {
+            e.stopPropagation();
+            const cur = activeScene().audioTracks.find((t) => t.id === trackId);
+            if (!cur) return;
+            if (cur.clip) {
+              cur.clip.muted = !cur.clip.muted;
+              cur.muted = cur.clip.muted;
+              if (!cur.clip.muted && cur.clip.volume <= 0) {
+                cur.clip.volume = 1;
+                cur.volume = 1;
+              }
+            } else {
+              cur.muted = !cur.muted;
+              if (!cur.muted && cur.volume <= 0) cur.volume = 1;
+            }
+            updateAudioVolumeUI();
+            if (state.isPlaying) scheduleAudioAtFrame(state.currentFrame);
+            renderAudioTrack();
+          };
+
+          const btnRemove = document.createElement('button');
+          btnRemove.type = 'button';
+          btnRemove.className = 'mini-btn danger';
+          btnRemove.textContent = '✕';
+          btnRemove.title = 'Delete Audio Track';
+          btnRemove.onclick = (e) => {
+            e.stopPropagation();
+            removeAudioTrack(trackId);
+          };
+
+          btnGroup.append(btnAdd, btnRec, btnMute, btnRemove);
+          labelEl.append(volFillEl, tagSpan, btnGroup);
+
+          labelEl.onclick = (e) => {
+            if ((e.target as HTMLElement)?.closest('button, input, select')) return;
+            selectAudioTrack(trackId);
+          };
+
+          labelEl.addEventListener(
+            'wheel',
+            (e) => {
+              if (e.deltaY === 0) return;
+              e.preventDefault();
+              e.stopPropagation();
+              const cur = activeScene().audioTracks.find((t) => t.id === trackId);
+              if (!cur) return;
+              const step =
+                Math.abs(e.deltaY) < 20
+                  ? -Math.sign(e.deltaY) * Math.max(0.02, Math.abs(e.deltaY) * 0.0025)
+                  : e.deltaY < 0
+                    ? 0.05
+                    : -0.05;
+              const baseVol = cur.clip ? cur.clip.volume : cur.volume;
+              const nextVol = Math.max(0, Math.min(1, Math.round((baseVol + step) * 100) / 100));
+              if (step > 0) {
+                cur.muted = false;
+                if (cur.clip) cur.clip.muted = false;
+              }
+              cur.volume = nextVol;
+              if (cur.clip) cur.clip.volume = nextVol;
+              if (cur.id === activeScene().activeAudioTrackId) {
+                state.audioVolume = nextVol;
+              }
+              updateAudioVolumeUI();
+              if (state.isPlaying && cur.clip && !cur.clip.muted && !cur.muted && activeAudioSources.length === 0) {
+                scheduleAudioAtFrame(state.currentFrame);
+              }
+              renderAudioTrack();
+            },
+            { passive: false }
+          );
+
+          const rowEl = document.createElement('div');
+          rowEl.className = 'track-row audio-track-row' + (state.showAudioTrack ? '' : ' hidden-track');
+
+          const waveCanvas = document.createElement('canvas');
+          waveCanvas.className = 'audio-wave-canvas';
+
+          const emptyHintEl = document.createElement('div');
+          emptyHintEl.className = 'audio-empty-hint';
+          emptyHintEl.textContent = 'Drop audio here or click ● Rec';
+
+          const recBadgeEl = document.createElement('div');
+          recBadgeEl.className = 'audio-rec-badge';
+          recBadgeEl.textContent = '● REC 0.0s';
+
+          const clipBoxEl = document.createElement('div');
+          clipBoxEl.className = 'audio-clip-box';
+
+          const leftTrim = document.createElement('div');
+          leftTrim.className = 'audio-trim-handle left';
+          leftTrim.dataset.trim = 'left';
+
+          const clipLabelEl = document.createElement('div');
+          clipLabelEl.className = 'audio-clip-label';
+
+          const rightTrim = document.createElement('div');
+          rightTrim.className = 'audio-trim-handle right';
+          rightTrim.dataset.trim = 'right';
+
+          clipBoxEl.append(leftTrim, clipLabelEl, rightTrim);
+          rowEl.append(waveCanvas, emptyHintEl, recBadgeEl, clipBoxEl);
+
+          rowEl.addEventListener('pointerdown', () => selectAudioTrack(trackId));
+          rowEl.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            const curSc = activeScene();
+            const cur = curSc.audioTracks.find((t) => t.id === trackId);
+            if (!cur) return;
+            selectAudioTrack(trackId);
+            contextAudioTrackId = trackId;
+            const hasClip = Boolean(cur.clip);
+            mustEl<HTMLButtonElement>('ctxAudioAutoLipSync').disabled = !hasClip;
+            mustEl<HTMLButtonElement>('ctxAudioFit').disabled = !hasClip;
+            mustEl<HTMLButtonElement>('ctxAudioMute').disabled = !hasClip;
+            mustEl<HTMLButtonElement>('ctxAudioDelete').disabled = !hasClip;
+            mustEl<HTMLButtonElement>('ctxAudioMute').textContent = cur.clip?.muted || cur.muted ? 'Unmute Audio' : 'Mute Audio';
+            ctxAudioDeleteTrack.classList.toggle('hidden-nest-ui', curSc.audioTracks.length <= 1);
+            audioContextMenu.style.display = 'flex';
+            const left = Math.min(window.innerWidth - 185, e.clientX);
+            const top = Math.min(window.innerHeight - 165, e.clientY);
+            audioContextMenu.style.left = `${left}px`;
+            audioContextMenu.style.top = `${top}px`;
+          });
+
+          clipBoxEl.addEventListener('pointerdown', (e) => {
+            const cur = activeScene().audioTracks.find((t) => t.id === trackId);
+            if (!cur?.clip) return;
+            e.stopPropagation();
+            selectAudioTrack(trackId);
+            if (e.button === 2) return;
+            if (state.isPlaying) togglePlay();
+
+            const targetEl = e.target as HTMLElement;
+            const trimRole = targetEl.dataset?.trim;
+            clipBoxEl.setPointerCapture(e.pointerId);
+            audioDragState = {
+              trackId,
+              mode: trimRole || 'move',
+              startX: e.clientX,
+              origTimelineStart: cur.clip.timelineStartSec,
+              origTrimStart: cur.clip.trimStartSec,
+              origTrimEnd: cur.clip.trimEndSec,
+            };
+          });
+
+          clipBoxEl.addEventListener('pointermove', (e) => {
+            if (!audioDragState || audioDragState.trackId !== trackId) return;
+            const cur = activeScene().audioTracks.find((t) => t.id === trackId);
+            if (!cur?.clip) return;
+            const trackW = Math.max(1, rowEl.clientWidth);
+            const timelineDurSec = state.totalFrames / state.fps;
+            const deltaSec = ((e.clientX - audioDragState.startX) / trackW) * timelineDurSec;
+            const frameSec = 1 / state.fps;
+
+            if (audioDragState.mode === 'move') {
+              const rawFrame = Math.round((audioDragState.origTimelineStart + deltaSec) * state.fps);
+              const snappedFrame = Math.max(0, Math.min(state.totalFrames - 1, rawFrame));
+              cur.clip.timelineStartSec = snappedFrame / state.fps;
+            } else if (audioDragState.mode === 'left') {
+              const origEndSecOnTimeline =
+                audioDragState.origTimelineStart + (audioDragState.origTrimEnd - audioDragState.origTrimStart);
+              const minPossibleStartSec = Math.max(0, audioDragState.origTimelineStart - audioDragState.origTrimStart);
+              const maxPossibleStartSec = origEndSecOnTimeline - frameSec;
+
+              const rawStartSec = audioDragState.origTimelineStart + deltaSec;
+              const snappedFrame = Math.round(rawStartSec * state.fps);
+              const clampedStartSec = Math.max(minPossibleStartSec, Math.min(maxPossibleStartSec, snappedFrame / state.fps));
+              const finalStartSec = Math.max(0, Math.round(clampedStartSec * state.fps) / state.fps);
+              const actualDelta = finalStartSec - audioDragState.origTimelineStart;
+
+              if (
+                audioDragState.origTrimStart + actualDelta >= 0 &&
+                audioDragState.origTrimStart + actualDelta <= audioDragState.origTrimEnd - frameSec * 0.5
+              ) {
+                cur.clip.timelineStartSec = finalStartSec;
+                cur.clip.trimStartSec = audioDragState.origTrimStart + actualDelta;
+              }
+            } else if (audioDragState.mode === 'right') {
+              const origDur = audioDragState.origTrimEnd - audioDragState.origTrimStart;
+              const rawEndOnTimeline = audioDragState.origTimelineStart + origDur + deltaSec;
+              const startFrame = Math.round(audioDragState.origTimelineStart * state.fps);
+              const snappedEndFrame = Math.max(startFrame + 1, Math.round(rawEndOnTimeline * state.fps));
+              const snappedDur = snappedEndFrame / state.fps - audioDragState.origTimelineStart;
+              const newTrimEnd = Math.min(cur.clip.buffer.duration, audioDragState.origTrimStart + snappedDur);
+              cur.clip.trimEndSec = Math.max(audioDragState.origTrimStart + frameSec * 0.5, newTrimEnd);
+            }
+            renderAudioTrack();
+          });
+
+          clipBoxEl.addEventListener('pointerup', () => {
+            if (audioDragState?.trackId === trackId) audioDragState = null;
+          });
+          clipBoxEl.addEventListener('pointercancel', () => {
+            if (audioDragState?.trackId === trackId) audioDragState = null;
+          });
+
+          const rightEl = document.createElement('div');
+          rightEl.className = 'track-right-cell audio-track-right' + (state.showAudioTrack ? '' : ' hidden-track');
+          rightEl.onclick = () => selectAudioTrack(trackId);
+
+          audioLabelsContainer.appendChild(labelEl);
+          audioRowsContainer.appendChild(rowEl);
+          audioRightsContainer.appendChild(rightEl);
+          audioTrackDomMap.set(trackId, {
+            trackId,
+            labelEl,
+            rowEl,
+            rightEl,
+            volFillEl,
+            tagSpan,
+            tagTextSpan,
+            btnAdd,
+            btnRec,
+            btnMute,
+            btnRemove,
+            waveCanvas,
+            emptyHintEl,
+            recBadgeEl,
+            clipBoxEl,
+            clipLabelEl,
+          });
+        }
+        renderedAudioTrackIds = tracks.map((t) => t.id);
+
+        for (const trk of tracks) {
+          const dom = audioTrackDomMap.get(trk.id);
+          if (dom) {
+            audioLabelsContainer.appendChild(dom.labelEl);
+            audioRowsContainer.appendChild(dom.rowEl);
+            audioRightsContainer.appendChild(dom.rightEl);
+          }
+        }
+      }
+    }
+
+    for (const trk of tracks) {
+      const dom = audioTrackDomMap.get(trk.id);
+      if (!dom) continue;
+      dom.labelEl.classList.toggle('hidden-track', !state.showAudioTrack);
+      dom.rowEl.classList.toggle('hidden-track', !state.showAudioTrack);
+      dom.rightEl.classList.toggle('hidden-track', !state.showAudioTrack);
+      dom.btnRemove.style.display = tracks.length > 1 ? '' : 'none';
+      if (dom.tagTextSpan.textContent !== trk.name) dom.tagTextSpan.textContent = trk.name;
+    }
+  }
+
   function toggleAudioTrack(forceState?: boolean): void {
     state.showAudioTrack = typeof forceState === 'boolean' ? forceState : !state.showAudioTrack;
     const btn = mustEl<HTMLButtonElement>('btnToggleAudioTrack');
     btn.classList.toggle('active', state.showAudioTrack);
-    audioTrackLabel.classList.toggle('hidden-track', !state.showAudioTrack);
-    audioTrackRow.classList.toggle('hidden-track', !state.showAudioTrack);
-    audioTrackRight.classList.toggle('hidden-track', !state.showAudioTrack);
+    btnAddAudioTrack.classList.toggle('hidden-nest-ui', !state.showAudioTrack || nestStack.length > 0);
+    syncAudioTrackContainers();
     if (state.showAudioTrack && typeof forceState !== 'boolean') {
       selectTimelineTrack('audio');
     } else if (!state.showAudioTrack && state.selectedTrack === 'audio') {
       selectTimelineTrack(state.activeLayer);
     }
+    updateActiveTrackHighlight();
     updateAudioVolumeUI();
     updateTimelinePanelHeight();
     requestAnimationFrame(() => {
@@ -4001,81 +8951,67 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   mustEl<HTMLButtonElement>('btnToggleAudioTrack').onclick = () => {
     if (nestStack.length === 0) toggleAudioTrack();
   };
-  audioTrackLabel.onclick = (e) => {
-    if ((e.target as HTMLElement)?.closest('button, input, select')) return;
-    selectTimelineTrack('audio');
-  };
-  audioTrackLabel.addEventListener(
-    'wheel',
-    (e) => {
-      if (e.deltaY === 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const step =
-        Math.abs(e.deltaY) < 20
-          ? -Math.sign(e.deltaY) * Math.max(0.02, Math.abs(e.deltaY) * 0.0025)
-          : e.deltaY < 0
-            ? 0.05
-            : -0.05;
-      if (state.audio) {
-        if (state.audio.muted && step > 0) {
-          state.audio.muted = false;
-          if (state.audio.volume <= 0) state.audio.volume = 0;
-        }
-        const nextVol = Math.max(0, Math.min(1, Math.round((state.audio.volume + step) * 100) / 100));
-        state.audio.volume = nextVol;
-        state.audioVolume = nextVol;
-        updateAudioVolumeUI();
-        if (state.isPlaying && !state.audio.muted && activeAudioSources.length === 0) {
-          scheduleAudioAtFrame(state.currentFrame);
-        }
-        renderAudioTrack();
-      } else {
-        const nextVol = Math.max(0, Math.min(1, Math.round((state.audioVolume + step) * 100) / 100));
-        state.audioVolume = nextVol;
-        updateAudioVolumeUI();
-      }
-    },
-    { passive: false }
-  );
-  audioTrackRow.addEventListener('pointerdown', () => selectTimelineTrack('audio'));
+  btnAddAudioTrack.onclick = () => addAudioTrack();
 
-  async function setDecodedAudioBuffer(decoded: AudioBuffer, name: string, startFrame = 0): Promise<void> {
+  async function setDecodedAudioBuffer(
+    decoded: AudioBuffer,
+    name: string,
+    startFrame = 0,
+    targetTrackId?: string
+  ): Promise<void> {
+    const sc = activeScene();
+    const trk = (targetTrackId && sc.audioTracks.find((t) => t.id === targetTrackId)) || state.activeAudioTrack;
+    sc.activeAudioTrackId = trk.id;
     const peaks = computePeaks(decoded);
-    state.audio = {
+    trk.clip = {
       buffer: decoded,
       peaks,
       name,
       timelineStartSec: Math.max(0, startFrame) / state.fps,
       trimStartSec: 0,
       trimEndSec: decoded.duration,
-      muted: false,
-      volume: state.audioVolume,
+      muted: trk.muted,
+      volume: trk.volume,
     };
 
+    syncAudioTrackContainers();
     updateAudioVolumeUI();
     if (!state.showAudioTrack) toggleAudioTrack(true);
     else renderAudioTrack();
   }
 
-  async function loadAudioFile(file: File | undefined): Promise<void> {
+  async function loadAudioFile(file: File | undefined, targetTrackId?: string): Promise<void> {
     if (!file) return;
     const ac = getAudioContext();
     const buf = await file.arrayBuffer();
     const decoded = await ac.decodeAudioData(buf);
-    await setDecodedAudioBuffer(decoded, file.name, 0);
+    await setDecodedAudioBuffer(decoded, file.name, 0, targetTrackId);
   }
 
-  function deleteActiveAudio(): void {
+  function deleteAudioOnTrack(trackId: string): void {
+    const sc = activeScene();
+    const trk = sc.audioTracks.find((t) => t.id === trackId);
+    if (!trk) return;
     stopAllAudioPlayback();
-    state.audio = null;
-    if (state.selectedTrack === 'audio') selectTimelineTrack(state.activeLayer);
-    else updateActiveTrackHighlight();
+    trk.clip = null;
+    if (state.isPlaying) scheduleAudioAtFrame(state.currentFrame);
     updateAudioVolumeUI();
     renderAudioTrack();
   }
 
-  function startLiveRecPreview(stream: MediaStream): void {
+  function deleteActiveAudio(): void {
+    deleteAudioOnTrack(state.activeAudioTrack.id);
+    if (state.selectedTrack === 'audio' && !state.audio) {
+      selectTimelineTrack(state.activeLayer);
+    } else {
+      updateActiveTrackHighlight();
+    }
+  }
+
+  function startLiveRecPreview(stream: MediaStream, trackId: string): void {
+    const dom = audioTrackDomMap.get(trackId);
+    if (!dom) return;
+
     const ac = getAudioContext();
     micSourceNode = ac.createMediaStreamSource(stream);
     micAnalyser = ac.createAnalyser();
@@ -4085,12 +9021,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const timeData = new Uint8Array(micAnalyser.fftSize);
     micLivePeaks = [];
     micStartTimestamp = performance.now();
-    audioEmptyHint.style.display = 'none';
-    audioClipBox.style.display = 'none';
-    audioRecBadge.style.display = 'block';
+    dom.emptyHintEl.style.display = 'none';
+    dom.clipBoxEl.style.display = 'none';
+    dom.recBadgeEl.style.display = 'block';
 
     const drawLive = () => {
       if (!micRecorder || micRecorder.state !== 'recording' || !micAnalyser) return;
+      const curDom = audioTrackDomMap.get(trackId);
+      if (!curDom) return;
       micAnalyser.getByteTimeDomainData(timeData);
       let peak = 0;
       for (let i = 0; i < timeData.length; i++) {
@@ -4101,14 +9039,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if (micLivePeaks.length > 300) micLivePeaks.shift();
 
       const elapsed = ((performance.now() - micStartTimestamp) / 1000).toFixed(1);
-      audioRecBadge.textContent = `● REC ${elapsed}s`;
+      curDom.recBadgeEl.textContent = `● REC ${elapsed}s`;
 
-      const w = audioTrackRow.clientWidth;
-      const h = audioTrackRow.clientHeight;
+      const w = curDom.rowEl.clientWidth;
+      const h = curDom.rowEl.clientHeight;
       if (w > 0 && h > 0) {
-        audioWaveCanvas.width = w;
-        audioWaveCanvas.height = h;
-        const actx = audioWaveCanvas.getContext('2d');
+        curDom.waveCanvas.width = w;
+        curDom.waveCanvas.height = h;
+        const actx = curDom.waveCanvas.getContext('2d');
         if (actx) {
           actx.clearRect(0, 0, w, h);
 
@@ -4145,127 +9083,88 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       micSourceNode = null;
     }
     micAnalyser = null;
-    audioRecBadge.style.display = 'none';
+    for (const dom of audioTrackDomMap.values()) {
+      dom.recBadgeEl.style.display = 'none';
+    }
   }
-
-  const btnRecAudio = mustEl<HTMLButtonElement>('btnRecAudio');
-  btnRecAudio.onclick = async () => {
-    if (micRecorder && micRecorder.state === 'recording') {
-      micRecorder.stop();
-      return;
-    }
-
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      onNotify('Microphone recording is not supported in this browser.');
-      return;
-    }
-
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      micChunks = [];
-      micStartFrame = state.currentFrame;
-
-      const recorder = new MediaRecorder(micStream);
-      micRecorder = recorder;
-      recorder.ondataavailable = (ev) => {
-        if (ev.data.size > 0) micChunks.push(ev.data);
-      };
-
-      recorder.onstop = async () => {
-        stopLiveRecPreview();
-        btnRecAudio.textContent = '● Rec';
-        btnRecAudio.classList.remove('recording');
-
-        if (micStream) {
-          micStream.getTracks().forEach((t) => t.stop());
-          micStream = null;
-        }
-
-        if (micChunks.length > 0) {
-          const blob = new Blob(micChunks, { type: recorder.mimeType || 'audio/webm' });
-          const ac = getAudioContext();
-          const buf = await blob.arrayBuffer();
-          const decoded = await ac.decodeAudioData(buf);
-          await setDecodedAudioBuffer(decoded, 'Mic Recording', micStartFrame);
-        } else {
-          renderAudioTrack();
-        }
-        micRecorder = null;
-      };
-
-      recorder.start();
-      btnRecAudio.textContent = '■ Stop';
-      btnRecAudio.classList.add('recording');
-      startLiveRecPreview(micStream);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      onNotify('Could not access microphone: ' + msg);
-    }
-  };
 
   function renderAudioTrack(): void {
     if (!state.showAudioTrack) return;
-    if (micRecorder && micRecorder.state === 'recording') return;
-    const w = audioTrackRow.clientWidth;
-    const h = audioTrackRow.clientHeight;
-    if (w <= 0 || h <= 0) return;
+    syncAudioTrackContainers();
+    const sc = activeScene();
+    const isRecording = Boolean(micRecorder && micRecorder.state === 'recording');
 
-    audioWaveCanvas.width = w;
-    audioWaveCanvas.height = h;
-    const actx = audioWaveCanvas.getContext('2d');
-    if (!actx) return;
-    actx.clearRect(0, 0, w, h);
+    for (const trk of sc.audioTracks) {
+      if (isRecording && activeRecAudioTrackId === trk.id) continue;
+      const dom = audioTrackDomMap.get(trk.id);
+      if (!dom) continue;
 
-    if (!state.audio) {
-      audioEmptyHint.style.display = 'flex';
-      audioClipBox.style.display = 'none';
-      return;
-    }
+      const w = dom.rowEl.clientWidth;
+      const h = dom.rowEl.clientHeight;
+      if (w <= 0 || h <= 0) continue;
 
-    audioEmptyHint.style.display = 'none';
-    audioClipBox.style.display = 'block';
+      dom.waveCanvas.width = w;
+      dom.waveCanvas.height = h;
+      const actx = dom.waveCanvas.getContext('2d');
+      if (!actx) continue;
+      actx.clearRect(0, 0, w, h);
 
-    const { buffer, peaks, name, timelineStartSec, trimStartSec, trimEndSec, muted, volume } = state.audio;
-    const effVol = muted ? 0 : Math.max(0, Math.min(1, typeof volume === 'number' ? volume : 1));
-    const timelineDurSec = state.totalFrames / state.fps;
-    const clipDur = trimEndSec - trimStartSec;
+      const clip = trk.clip;
+      if (!clip) {
+        dom.emptyHintEl.style.display = 'flex';
+        dom.clipBoxEl.style.display = 'none';
+        continue;
+      }
 
-    const leftPct = (timelineStartSec / timelineDurSec) * 100;
-    const widthPct = (clipDur / timelineDurSec) * 100;
-    audioClipBox.style.left = `${leftPct}%`;
-    audioClipBox.style.width = `${widthPct}%`;
-    audioClipBox.style.opacity = muted || effVol === 0 ? '0.4' : '1';
-    audioClipBox.classList.toggle('selected', state.selectedTrack === 'audio');
+      dom.emptyHintEl.style.display = 'none';
+      dom.clipBoxEl.style.display = 'block';
 
-    const startFrameNum = Math.round(timelineStartSec * state.fps) + 1;
-    audioClipLabel.textContent = `${name} (F${startFrameNum} • ${clipDur.toFixed(2)}s)`;
+      const { buffer, peaks, name, timelineStartSec, trimStartSec, trimEndSec, muted, volume } = clip;
+      const isMuted = muted || trk.muted;
+      const effVol = isMuted ? 0 : Math.max(0, Math.min(1, typeof volume === 'number' ? volume : 1));
+      const timelineDurSec = state.totalFrames / state.fps;
+      const clipDur = trimEndSec - trimStartSec;
 
-    const clipX0 = (timelineStartSec / timelineDurSec) * w;
-    const clipX1 = ((timelineStartSec + clipDur) / timelineDurSec) * w;
-    const drawStartX = Math.max(0, Math.floor(clipX0));
-    const drawEndX = Math.min(w, Math.ceil(clipX1));
+      const leftPct = (timelineStartSec / timelineDurSec) * 100;
+      const widthPct = (clipDur / timelineDurSec) * 100;
+      dom.clipBoxEl.style.left = `${leftPct}%`;
+      dom.clipBoxEl.style.width = `${widthPct}%`;
+      dom.clipBoxEl.style.opacity = isMuted || effVol === 0 ? '0.4' : '1';
+      dom.clipBoxEl.classList.toggle('selected', state.selectedTrack === 'audio' && sc.activeAudioTrackId === trk.id);
 
-    actx.fillStyle = muted || effVol === 0 ? 'rgba(192, 132, 252, 0.35)' : '#c084fc';
-    const midY = h / 2;
-    const maxAmp = (h - 12) / 2;
-    const volScale = muted ? 0.25 : 0.15 + 0.85 * effVol;
+      const startFrameNum = Math.round(timelineStartSec * state.fps) + 1;
+      dom.clipLabelEl.textContent = `${name} (F${startFrameNum} • ${clipDur.toFixed(2)}s)`;
 
-    for (let px = drawStartX; px < drawEndX; px++) {
-      const tOnTimeline = (px / w) * timelineDurSec;
-      const tInAudio = trimStartSec + (tOnTimeline - timelineStartSec);
-      const norm = tInAudio / buffer.duration;
-      const idx = Math.max(0, Math.min(peaks.length - 1, Math.floor(norm * peaks.length)));
-      const amp = Math.max(1, peaks[idx] * maxAmp * volScale);
-      actx.fillRect(px, Math.round(midY - amp), 1, Math.round(amp * 2));
+      const clipX0 = (timelineStartSec / timelineDurSec) * w;
+      const clipX1 = ((timelineStartSec + clipDur) / timelineDurSec) * w;
+      const drawStartX = Math.max(0, Math.floor(clipX0));
+      const drawEndX = Math.min(w, Math.ceil(clipX1));
+
+      actx.fillStyle = isMuted || effVol === 0 ? 'rgba(192, 132, 252, 0.35)' : '#c084fc';
+      const midY = h / 2;
+      const maxAmp = (h - 12) / 2;
+      const volScale = isMuted ? 0.25 : 0.15 + 0.85 * effVol;
+
+      for (let px = drawStartX; px < drawEndX; px++) {
+        const tOnTimeline = (px / w) * timelineDurSec;
+        const tInAudio = trimStartSec + (tOnTimeline - timelineStartSec);
+        const norm = tInAudio / buffer.duration;
+        const idx = Math.max(0, Math.min(peaks.length - 1, Math.floor(norm * peaks.length)));
+        const amp = Math.max(1, peaks[idx] * maxAmp * volScale);
+        actx.fillRect(px, Math.round(midY - amp), 1, Math.round(amp * 2));
+      }
     }
   }
 
-  function autoLipSyncAudioToMouth(): void {
-    if (!state.audio) {
+  function autoLipSyncAudioToMouth(targetTrackId?: string): void {
+    const sc = activeScene();
+    const trk = (targetTrackId && sc.audioTracks.find((t) => t.id === targetTrackId)) || state.activeAudioTrack;
+    const clip = trk.clip;
+    if (!clip) {
       onNotify('Load or record an audio clip first to run Auto Lip-Sync.');
       return;
     }
-    const { buffer, timelineStartSec, trimStartSec, trimEndSec } = state.audio;
+    const { buffer, timelineStartSec, trimStartSec, trimEndSec } = clip;
     const clipDur = Math.max(0, trimEndSec - trimStartSec);
     if (clipDur <= 0.01) return;
 
@@ -4278,7 +9177,6 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const endFrame = Math.min(state.totalFrames - 1, Math.ceil((timelineStartSec + clipDur) * state.fps));
     if (endFrame < startFrame) return;
 
-    // Analyze each frame's RMS loudness, zero-crossing rate, and low/high band ratio
     const stats: Array<{ frame: number; rms: number; zcr: number; lowRatio: number }> = [];
     const rmsValues: number[] = [];
 
@@ -4327,7 +9225,6 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const adaptivePeak = Math.max(0.03, sortedRms[Math.floor(sortedRms.length * 0.94)] || 0.1);
     const silenceThresh = Math.max(0.01, adaptivePeak * 0.14);
 
-    // Viseme indices: 0:Rest, 1:MBP, 2:AI, 3:E, 4:O, 5:U, 6:FV, 7:L
     const frameVisemes: number[] = [];
     let wasSilent = true;
 
@@ -4337,21 +9234,21 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
       let vis = 0;
       if (st.rms < silenceThresh) {
-        vis = 0; // Rest
+        vis = 0;
         wasSilent = true;
       } else {
         if (wasSilent && i + 1 < stats.length && stats[i + 1].rms >= st.rms * 0.9 && normVol < 0.55) {
-          vis = 1; // MBP bilabial onset
+          vis = 1;
         } else if (st.zcr > 0.15 && st.lowRatio < 0.42 && normVol < 0.65) {
-          vis = 6; // FV fricative
+          vis = 6;
         } else if (normVol >= 0.72) {
-          vis = st.lowRatio > 0.62 ? 2 : 3; // Wide AI or E
+          vis = st.lowRatio > 0.62 ? 2 : 3;
         } else if (normVol >= 0.44) {
-          if (st.lowRatio > 0.72) vis = 4; // O
-          else if (st.zcr > 0.085) vis = 7; // L
-          else vis = 3; // E
+          if (st.lowRatio > 0.72) vis = 4;
+          else if (st.zcr > 0.085) vis = 7;
+          else vis = 3;
         } else {
-          vis = st.lowRatio > 0.68 ? 5 : 1; // U or MBP
+          vis = st.lowRatio > 0.68 ? 5 : 1;
         }
         wasSilent = false;
       }
@@ -4386,45 +9283,86 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     updateMouthWidget();
     renderTimeline();
     renderStage();
-    onNotify(`Auto lip-sync created ${count} mouth keyframes.`);
+    onNotify(`Auto lip-sync created ${count} mouth keyframes on ${state.mouthLayer.name}.`);
   }
 
-  audioTrackRow.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    if (!state.audio) return;
-    selectTimelineTrack('audio');
-
-    mustEl<HTMLButtonElement>('ctxAudioMute').textContent = state.audio.muted ? 'Unmute Audio' : 'Mute Audio';
-    audioContextMenu.style.display = 'flex';
-    const left = Math.min(window.innerWidth - 185, e.clientX);
-    const top = Math.min(window.innerHeight - 135, e.clientY);
-    audioContextMenu.style.left = `${left}px`;
-    audioContextMenu.style.top = `${top}px`;
-  });
-
   mustEl<HTMLButtonElement>('ctxAudioAutoLipSync').onclick = () => {
+    const tid = contextAudioTrackId;
     hideMenus();
-    autoLipSyncAudioToMouth();
+    autoLipSyncAudioToMouth(tid || undefined);
   };
   mustEl<HTMLButtonElement>('ctxAudioDelete').onclick = () => {
-    deleteActiveAudio();
+    if (contextAudioTrackId) deleteAudioOnTrack(contextAudioTrackId);
+    else deleteActiveAudio();
     hideMenus();
   };
   mustEl<HTMLButtonElement>('ctxAudioMute').onclick = () => {
-    mustEl<HTMLButtonElement>('btnMuteAudio').click();
+    const sc = activeScene();
+    const trk = (contextAudioTrackId && sc.audioTracks.find((t) => t.id === contextAudioTrackId)) || state.activeAudioTrack;
+    if (trk.clip) {
+      trk.clip.muted = !trk.clip.muted;
+      trk.muted = trk.clip.muted;
+      if (!trk.clip.muted && trk.clip.volume <= 0) {
+        trk.clip.volume = 1;
+        trk.volume = 1;
+      }
+    } else {
+      trk.muted = !trk.muted;
+    }
+    updateAudioVolumeUI();
+    if (trk.muted) stopAllAudioPlayback();
+    else if (state.isPlaying) scheduleAudioAtFrame(state.currentFrame);
+    renderAudioTrack();
     hideMenus();
   };
   mustEl<HTMLButtonElement>('ctxAudioFit').onclick = () => {
-    if (state.audio) {
+    const sc = activeScene();
+    const trk = (contextAudioTrackId && sc.audioTracks.find((t) => t.id === contextAudioTrackId)) || state.activeAudioTrack;
+    if (trk.clip) {
       const neededEndSec = Math.max(
         1,
-        state.audio.timelineStartSec + (state.audio.trimEndSec - state.audio.trimStartSec)
+        trk.clip.timelineStartSec + (trk.clip.trimEndSec - trk.clip.trimStartSec)
       );
       state.totalFrames = Math.max(12, Math.ceil(neededEndSec * state.fps));
       renderTimeline();
     }
     hideMenus();
   };
+  ctxAudioDeleteTrack.onclick = () => {
+    const tid = contextAudioTrackId;
+    hideMenus();
+    if (tid) removeAudioTrack(tid);
+  };
+
+  function clearDropActiveHighlights(): void {
+    stageContainer.classList.remove('drop-active');
+    for (const dom of bgTrackDomMap.values()) dom.rowEl.classList.remove('drop-active');
+    for (const dom of audioTrackDomMap.values()) dom.rowEl.classList.remove('drop-active');
+  }
+
+  function findDropBgLayerId(target: Node | null): string | null {
+    if (!target) return null;
+    for (const [id, dom] of bgTrackDomMap.entries()) {
+      if (dom.rowEl.contains(target) || dom.labelEl.contains(target)) return id;
+    }
+    return null;
+  }
+
+  function findDropAudioTrackId(target: Node | null): string | null {
+    if (!target) return null;
+    for (const [id, dom] of audioTrackDomMap.entries()) {
+      if (dom.rowEl.contains(target) || dom.labelEl.contains(target)) return id;
+    }
+    return null;
+  }
+
+  function findDropCelTrackId(target: Node | null): string | null {
+    if (!target) return null;
+    for (const [id, dom] of celTrackDomMap.entries()) {
+      if (dom.rowEl.contains(target) || dom.labelEl.contains(target)) return id;
+    }
+    return null;
+  }
 
   window.addEventListener(
     'dragover',
@@ -4433,18 +9371,15 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       e.preventDefault();
       if (app.mode !== 'editor') return;
       const target = e.target as Node | null;
-      if (target && (bgTrackRow.contains(target) || bgTrackLabel.contains(target))) {
-        bgTrackRow.classList.add('drop-active');
-        stageContainer.classList.remove('drop-active');
-        audioTrackRow.classList.remove('drop-active');
-      } else if (target && (audioTrackRow.contains(target) || audioTrackLabel.contains(target))) {
-        audioTrackRow.classList.add('drop-active');
-        stageContainer.classList.remove('drop-active');
-        bgTrackRow.classList.remove('drop-active');
+      clearDropActiveHighlights();
+      const bgId = findDropBgLayerId(target);
+      const audId = findDropAudioTrackId(target);
+      if (bgId) {
+        bgTrackDomMap.get(bgId)?.rowEl.classList.add('drop-active');
+      } else if (audId) {
+        audioTrackDomMap.get(audId)?.rowEl.classList.add('drop-active');
       } else {
         stageContainer.classList.add('drop-active');
-        audioTrackRow.classList.remove('drop-active');
-        bgTrackRow.classList.remove('drop-active');
       }
     },
     { signal }
@@ -4454,9 +9389,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     'dragleave',
     (e) => {
       if (e.relatedTarget === null) {
-        stageContainer.classList.remove('drop-active');
-        audioTrackRow.classList.remove('drop-active');
-        bgTrackRow.classList.remove('drop-active');
+        clearDropActiveHighlights();
       }
     },
     { signal }
@@ -4467,31 +9400,27 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     (e) => {
       if (draggingSceneId) return;
       e.preventDefault();
-      stageContainer.classList.remove('drop-active');
-      audioTrackRow.classList.remove('drop-active');
-      bgTrackRow.classList.remove('drop-active');
+      clearDropActiveHighlights();
       if (app.mode !== 'editor') return;
 
       const file = e.dataTransfer?.files?.[0];
       if (!file) return;
+      const target = e.target as Node | null;
 
       if (file.type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac|webm)$/i.test(file.name)) {
-        void loadAudioFile(file);
+        const audId = findDropAudioTrackId(target);
+        void loadAudioFile(file, audId || undefined);
         return;
       }
 
       if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name)) {
-        const target = e.target as Node | null;
-        if (
-          target &&
-          (bgTrackRow.contains(target) ||
-            bgTrackLabel.contains(target) ||
-            (state.activeLayer === 'bg' && stageContainer.contains(target)))
-        ) {
-          loadImageFile(file, 'bg');
-        } else if (target && celTrackRow.contains(target)) {
+        const bgId = findDropBgLayerId(target);
+        const celId = findDropCelTrackId(target);
+        if (bgId || (target && state.activeLayer === 'bg' && stageContainer.contains(target))) {
+          loadImageFile(file, 'bg', state.currentFrame, bgId || undefined);
+        } else if (celId) {
           const targetFrame = frameFromClientX(e.clientX);
-          loadImageFile(file, 'cel', targetFrame);
+          loadImageFile(file, 'cel', targetFrame, celId);
         } else {
           loadImageFile(file, 'cel', state.currentFrame);
         }
@@ -4499,95 +9428,6 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     },
     { signal }
   );
-
-  mustEl<HTMLButtonElement>('btnMuteAudio').onclick = () => {
-    if (!state.audio) return;
-    state.audio.muted = !state.audio.muted;
-    if (!state.audio.muted && state.audio.volume <= 0) {
-      state.audio.volume = 1;
-      state.audioVolume = 1;
-    }
-    updateAudioVolumeUI();
-    if (state.audio.muted) stopAllAudioPlayback();
-    else if (state.isPlaying) scheduleAudioAtFrame(state.currentFrame);
-    renderAudioTrack();
-  };
-
-  let audioDragState: {
-    mode: string;
-    startX: number;
-    origTimelineStart: number;
-    origTrimStart: number;
-    origTrimEnd: number;
-  } | null = null;
-
-  audioClipBox.addEventListener('pointerdown', (e) => {
-    if (!state.audio) return;
-    e.stopPropagation();
-    selectTimelineTrack('audio');
-    if (e.button === 2) return;
-    if (state.isPlaying) togglePlay();
-
-    const targetEl = e.target as HTMLElement;
-    const trimRole = targetEl.dataset?.trim;
-    audioClipBox.setPointerCapture(e.pointerId);
-    audioDragState = {
-      mode: trimRole || 'move',
-      startX: e.clientX,
-      origTimelineStart: state.audio.timelineStartSec,
-      origTrimStart: state.audio.trimStartSec,
-      origTrimEnd: state.audio.trimEndSec,
-    };
-  });
-
-  audioClipBox.addEventListener('pointermove', (e) => {
-    if (!audioDragState || !state.audio) return;
-    const trackW = Math.max(1, audioTrackRow.clientWidth);
-    const timelineDurSec = state.totalFrames / state.fps;
-    const deltaSec = ((e.clientX - audioDragState.startX) / trackW) * timelineDurSec;
-    const frameSec = 1 / state.fps;
-
-    if (audioDragState.mode === 'move') {
-      const rawFrame = Math.round((audioDragState.origTimelineStart + deltaSec) * state.fps);
-      const snappedFrame = Math.max(0, Math.min(state.totalFrames - 1, rawFrame));
-      state.audio.timelineStartSec = snappedFrame / state.fps;
-    } else if (audioDragState.mode === 'left') {
-      const origEndSecOnTimeline =
-        audioDragState.origTimelineStart + (audioDragState.origTrimEnd - audioDragState.origTrimStart);
-      const minPossibleStartSec = Math.max(0, audioDragState.origTimelineStart - audioDragState.origTrimStart);
-      const maxPossibleStartSec = origEndSecOnTimeline - frameSec;
-
-      const rawStartSec = audioDragState.origTimelineStart + deltaSec;
-      const snappedFrame = Math.round(rawStartSec * state.fps);
-      const clampedStartSec = Math.max(minPossibleStartSec, Math.min(maxPossibleStartSec, snappedFrame / state.fps));
-      const finalStartSec = Math.max(0, Math.round(clampedStartSec * state.fps) / state.fps);
-      const actualDelta = finalStartSec - audioDragState.origTimelineStart;
-
-      if (
-        audioDragState.origTrimStart + actualDelta >= 0 &&
-        audioDragState.origTrimStart + actualDelta <= audioDragState.origTrimEnd - frameSec * 0.5
-      ) {
-        state.audio.timelineStartSec = finalStartSec;
-        state.audio.trimStartSec = audioDragState.origTrimStart + actualDelta;
-      }
-    } else if (audioDragState.mode === 'right') {
-      const origDur = audioDragState.origTrimEnd - audioDragState.origTrimStart;
-      const rawEndOnTimeline = audioDragState.origTimelineStart + origDur + deltaSec;
-      const startFrame = Math.round(audioDragState.origTimelineStart * state.fps);
-      const snappedEndFrame = Math.max(startFrame + 1, Math.round(rawEndOnTimeline * state.fps));
-      const snappedDur = snappedEndFrame / state.fps - audioDragState.origTimelineStart;
-      const newTrimEnd = Math.min(state.audio.buffer.duration, audioDragState.origTrimStart + snappedDur);
-      state.audio.trimEndSec = Math.max(audioDragState.origTrimStart + frameSec * 0.5, newTrimEnd);
-    }
-    renderAudioTrack();
-  });
-
-  audioClipBox.addEventListener('pointerup', () => {
-    audioDragState = null;
-  });
-  audioClipBox.addEventListener('pointercancel', () => {
-    audioDragState = null;
-  });
 
   window.addEventListener(
     'resize',
@@ -4673,13 +9513,18 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   function removeLastFrameFromTimeline(): void {
     if (state.totalFrames <= 1) return;
     const newTotal = state.totalFrames - 1;
-    for (const [start, cel] of Array.from(state.cels.entries())) {
-      if (start >= newTotal) state.cels.delete(start);
-      else if (start + cel.duration > newTotal) cel.duration = newTotal - start;
+    const target = activeTimelineTarget();
+    for (const trk of target.celTracks) {
+      for (const [start, cel] of Array.from(trk.cels.entries())) {
+        if (start >= newTotal) trk.cels.delete(start);
+        else if (start + cel.duration > newTotal) cel.duration = newTotal - start;
+      }
     }
-    for (const [start, vCel] of Array.from(state.vectorCels.entries())) {
-      if (start >= newTotal) state.vectorCels.delete(start);
-      else if (start + vCel.duration > newTotal) vCel.duration = newTotal - start;
+    for (const trk of target.vectorTracks) {
+      for (const [start, vCel] of Array.from(trk.cels.entries())) {
+        if (start >= newTotal) trk.cels.delete(start);
+        else if (start + vCel.duration > newTotal) vCel.duration = newTotal - start;
+      }
     }
     if (state.loopRange) {
       if (state.loopRange.start >= newTotal) {
@@ -4715,11 +9560,31 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   }
 
   function renderTimeline(): void {
+    syncLayerTrackContainers();
+    syncAudioTrackContainers();
+    updateActiveTrackHighlight();
+
     rulerRow.innerHTML = '';
-    celTrackRow.innerHTML = '';
-    vectorTrackRow.innerHTML = '';
-    mouthTrackRow.innerHTML = '';
     camTrackRow.innerHTML = '';
+
+    const target = activeTimelineTarget();
+    const isScene = 'mouthLayers' in target;
+    const celTracks = target.celTracks;
+    const vecTracks = target.vectorTracks;
+    const mouthLayers = isScene ? target.mouthLayers : [];
+
+    for (const trk of celTracks) {
+      const dom = celTrackDomMap.get(trk.id);
+      if (dom) dom.rowEl.innerHTML = '';
+    }
+    for (const trk of vecTracks) {
+      const dom = vectorTrackDomMap.get(trk.id);
+      if (dom) dom.rowEl.innerHTML = '';
+    }
+    for (const ml of mouthLayers) {
+      const dom = mouthTrackDomMap.get(ml.id);
+      if (dom) dom.rowEl.innerHTML = '';
+    }
 
     const sortedCamKeys = Array.from(state.cameraKeys.keys()).sort((a, b) => a - b);
     const firstCam = sortedCamKeys[0];
@@ -4728,27 +9593,43 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const labelStep = effectiveColsPerScreen > 48 ? 5 : effectiveColsPerScreen > 30 ? 2 : 1;
 
     for (let f = 0; f < state.totalFrames; f++) {
+      const isCurr = f === state.currentFrame;
       const rCell = document.createElement('div');
-      rCell.className = 'ruler-cell' + (f === state.currentFrame ? ' active' : '');
-      if (f === 0 || (f + 1) % labelStep === 0 || f === state.currentFrame) {
+      rCell.className = 'ruler-cell' + (isCurr ? ' active' : '');
+      if (f === 0 || (f + 1) % labelStep === 0 || isCurr) {
         rCell.textContent = String(f + 1);
       }
       rulerRow.appendChild(rCell);
 
-      const mCell = document.createElement('div');
-      mCell.className = 'frame-cell' + (f === state.currentFrame ? ' current-col' : '');
-      mouthTrackRow.appendChild(mCell);
+      for (const ml of mouthLayers) {
+        const dom = mouthTrackDomMap.get(ml.id);
+        if (dom) {
+          const mCell = document.createElement('div');
+          mCell.className = 'frame-cell' + (isCurr ? ' current-col' : '');
+          dom.rowEl.appendChild(mCell);
+        }
+      }
 
-      const vCell = document.createElement('div');
-      vCell.className = 'frame-cell' + (f === state.currentFrame ? ' current-col' : '');
-      vectorTrackRow.appendChild(vCell);
+      for (const trk of vecTracks) {
+        const dom = vectorTrackDomMap.get(trk.id);
+        if (dom) {
+          const vCell = document.createElement('div');
+          vCell.className = 'frame-cell' + (isCurr ? ' current-col' : '');
+          dom.rowEl.appendChild(vCell);
+        }
+      }
 
-      const cCell = document.createElement('div');
-      cCell.className = 'frame-cell' + (f === state.currentFrame ? ' current-col' : '');
-      celTrackRow.appendChild(cCell);
+      for (const trk of celTracks) {
+        const dom = celTrackDomMap.get(trk.id);
+        if (dom) {
+          const cCell = document.createElement('div');
+          cCell.className = 'frame-cell' + (isCurr ? ' current-col' : '');
+          dom.rowEl.appendChild(cCell);
+        }
+      }
 
       const camCell = document.createElement('div');
-      camCell.className = 'frame-cell' + (f === state.currentFrame ? ' current-col' : '');
+      camCell.className = 'frame-cell' + (isCurr ? ' current-col' : '');
       if (sortedCamKeys.length >= 2 && f >= firstCam && f <= lastCam) {
         const bar = document.createElement('div');
         bar.className = 'cam-bar';
@@ -4764,79 +9645,127 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       camTrackRow.appendChild(camCell);
     }
 
-    for (const [f, mk] of state.mouthLayer.keys.entries()) {
-      if (f >= state.totalFrames) continue;
-      const pill = document.createElement('div');
-      pill.className = 'mouth-key-pill';
-      pill.style.left = `calc(${(f / state.totalFrames) * 100}% + 1px)`;
-      pill.style.width = `calc(${(1 / state.totalFrames) * 100}% - 2px)`;
-      pill.textContent = VISEME_NAMES[mk.viseme] || 'M';
-      mouthTrackRow.appendChild(pill);
+    for (const ml of mouthLayers) {
+      const dom = mouthTrackDomMap.get(ml.id);
+      if (!dom) continue;
+      for (const [f, mk] of ml.keys.entries()) {
+        if (f >= state.totalFrames) continue;
+        const pill = document.createElement('div');
+        pill.className = 'mouth-key-pill';
+        pill.style.left = `calc(${(f / state.totalFrames) * 100}% + 1px)`;
+        pill.style.width = `calc(${(1 / state.totalFrames) * 100}% - 2px)`;
+        pill.textContent = VISEME_NAMES[mk.viseme] || 'M';
+        dom.rowEl.appendChild(pill);
+      }
     }
 
     const rootSc = activeScene();
-    for (const [start, vCel] of state.vectorCels.entries()) {
-      if (start >= state.totalFrames) continue;
-      const visibleDur = Math.min(vCel.duration, state.totalFrames - start);
-      const isNested = Boolean(vCel.nestId);
-      const nestClip = isNested && vCel.nestId ? rootSc.nestedClips.get(vCel.nestId) : null;
-      const spanBar = document.createElement('div');
-      spanBar.className = 'vector-span-bar' + (isNested ? ' is-nested' : '');
-      spanBar.style.left = `calc(${(start / state.totalFrames) * 100}% + 2px)`;
-      spanBar.style.width = `calc(${(visibleDur / state.totalFrames) * 100}% - 4px)`;
-      spanBar.title =
-        isNested && nestClip
-          ? `${nestClip.name} (${nestClip.totalFrames}f loop • Hold: ${vCel.duration}f) — Double-click or Right-click to open nest`
-          : `Vector Frame ${start + 1} (Hold: ${vCel.duration}f) — Drag to stretch, Right-click for options`;
+    for (const trk of vecTracks) {
+      const dom = vectorTrackDomMap.get(trk.id);
+      if (!dom) continue;
+      for (const [start, vCel] of trk.cels.entries()) {
+        if (start >= state.totalFrames) continue;
+        const visibleDur = Math.min(vCel.duration, state.totalFrames - start);
+        const isNested = Boolean(vCel.nestId);
+        const nestClip = isNested && vCel.nestId ? rootSc.nestedClips.get(vCel.nestId) : null;
+        const tweenKeys = getActivePosKeys(vCel);
+        const hasTween = tweenKeys.length >= 2;
+        const spanBar = document.createElement('div');
+        spanBar.className = 'vector-span-bar' + (isNested ? ' is-nested' : '') + (hasTween ? ' has-tween' : '');
+        spanBar.style.left = `calc(${(start / state.totalFrames) * 100}% + 2px)`;
+        spanBar.style.width = `calc(${(visibleDur / state.totalFrames) * 100}% - 4px)`;
+        spanBar.title =
+          isNested && nestClip
+            ? `${nestClip.name} (${nestClip.totalFrames}f loop • Hold: ${vCel.duration}f) — Double-click or Right-click to open nest`
+            : hasTween
+              ? `${trk.name} Frame ${start + 1} (Hold: ${vCel.duration}f • ${tweenKeys.length} motion keys) — Drag to stretch, Right-click for options`
+              : `${trk.name} Frame ${start + 1} (Hold: ${vCel.duration}f) — Drag to stretch, Right-click for options`;
 
-      const dot = document.createElement('div');
-      dot.className = 'vector-span-dot' + (isVectorCelInkFilled(rootSc, vCel) ? '' : ' blank');
-      spanBar.appendChild(dot);
+        const dot = document.createElement('div');
+        dot.className = 'vector-span-dot' + (isVectorCelInkFilled(rootSc, vCel) ? '' : ' blank');
+        spanBar.appendChild(dot);
 
-      if (isNested && nestClip) {
-        const nestPill = document.createElement('span');
-        nestPill.className = 'nest-span-pill';
-        nestPill.textContent = `⟲ ${nestClip.totalFrames}f`;
-        spanBar.appendChild(nestPill);
+        if (hasTween) {
+          for (const tk of tweenKeys) {
+            if (tk.relFrame >= visibleDur) continue;
+            const kDot = document.createElement('div');
+            const absF = start + tk.relFrame;
+            const isCurrKey = absF === state.currentFrame;
+            kDot.className = 'cel-tween-key-dot' + (isCurrKey ? ' current' : '');
+            kDot.dataset.absFrame = String(absF);
+            kDot.style.left = `${((tk.relFrame + 0.5) / visibleDur) * 100}%`;
+            kDot.title = `Motion Key F${absF + 1}`;
+            spanBar.appendChild(kDot);
+          }
+        }
+
+        if (isNested && nestClip) {
+          const nestPill = document.createElement('span');
+          nestPill.className = 'nest-span-pill';
+          nestPill.textContent = `⟲ ${nestClip.totalFrames}f`;
+          spanBar.appendChild(nestPill);
+        }
+
+        const grip = document.createElement('div');
+        grip.className = 'vector-span-grip';
+        spanBar.appendChild(grip);
+
+        dom.rowEl.appendChild(spanBar);
       }
-
-      const grip = document.createElement('div');
-      grip.className = 'vector-span-grip';
-      spanBar.appendChild(grip);
-
-      vectorTrackRow.appendChild(spanBar);
     }
 
-    for (const [start, cel] of state.cels.entries()) {
-      if (start >= state.totalFrames) continue;
-      const visibleDur = Math.min(cel.duration, state.totalFrames - start);
-      const isNested = Boolean(cel.nestId);
-      const nestClip = isNested && cel.nestId ? rootSc.nestedClips.get(cel.nestId) : null;
-      const spanBar = document.createElement('div');
-      spanBar.className = 'cel-span-bar' + (isNested ? ' is-nested' : '');
-      spanBar.style.left = `calc(${(start / state.totalFrames) * 100}% + 2px)`;
-      spanBar.style.width = `calc(${(visibleDur / state.totalFrames) * 100}% - 4px)`;
-      spanBar.title =
-        isNested && nestClip
-          ? `${nestClip.name} (${nestClip.totalFrames}f loop • Hold: ${cel.duration}f) — Double-click or Right-click to open nest`
-          : `Frame ${start + 1} (Hold: ${cel.duration}f) — Drag to stretch, Right-click for options`;
+    for (const trk of celTracks) {
+      const dom = celTrackDomMap.get(trk.id);
+      if (!dom) continue;
+      for (const [start, cel] of trk.cels.entries()) {
+        if (start >= state.totalFrames) continue;
+        const visibleDur = Math.min(cel.duration, state.totalFrames - start);
+        const isNested = Boolean(cel.nestId);
+        const nestClip = isNested && cel.nestId ? rootSc.nestedClips.get(cel.nestId) : null;
+        const tweenKeys = getActivePosKeys(cel);
+        const hasTween = tweenKeys.length >= 2;
+        const spanBar = document.createElement('div');
+        spanBar.className = 'cel-span-bar' + (isNested ? ' is-nested' : '') + (hasTween ? ' has-tween' : '');
+        spanBar.style.left = `calc(${(start / state.totalFrames) * 100}% + 2px)`;
+        spanBar.style.width = `calc(${(visibleDur / state.totalFrames) * 100}% - 4px)`;
+        spanBar.title =
+          isNested && nestClip
+            ? `${nestClip.name} (${nestClip.totalFrames}f loop • Hold: ${cel.duration}f) — Double-click or Right-click to open nest`
+            : hasTween
+              ? `${trk.name} Frame ${start + 1} (Hold: ${cel.duration}f • ${tweenKeys.length} motion keys) — Drag to stretch, Right-click for options`
+              : `${trk.name} Frame ${start + 1} (Hold: ${cel.duration}f) — Drag to stretch, Right-click for options`;
 
-      const dot = document.createElement('div');
-      dot.className = 'cel-span-dot' + (isCelInkFilled(rootSc, cel) ? '' : ' blank');
-      spanBar.appendChild(dot);
+        const dot = document.createElement('div');
+        dot.className = 'cel-span-dot' + (isCelInkFilled(rootSc, cel) ? '' : ' blank');
+        spanBar.appendChild(dot);
 
-      if (isNested && nestClip) {
-        const nestPill = document.createElement('span');
-        nestPill.className = 'nest-span-pill';
-        nestPill.textContent = `⟲ ${nestClip.totalFrames}f`;
-        spanBar.appendChild(nestPill);
+        if (hasTween) {
+          for (const tk of tweenKeys) {
+            if (tk.relFrame >= visibleDur) continue;
+            const kDot = document.createElement('div');
+            const absF = start + tk.relFrame;
+            const isCurrKey = absF === state.currentFrame;
+            kDot.className = 'cel-tween-key-dot' + (isCurrKey ? ' current' : '');
+            kDot.dataset.absFrame = String(absF);
+            kDot.style.left = `${((tk.relFrame + 0.5) / visibleDur) * 100}%`;
+            kDot.title = `Motion Key F${absF + 1}`;
+            spanBar.appendChild(kDot);
+          }
+        }
+
+        if (isNested && nestClip) {
+          const nestPill = document.createElement('span');
+          nestPill.className = 'nest-span-pill';
+          nestPill.textContent = `⟲ ${nestClip.totalFrames}f`;
+          spanBar.appendChild(nestPill);
+        }
+
+        const grip = document.createElement('div');
+        grip.className = 'cel-span-grip';
+        spanBar.appendChild(grip);
+
+        dom.rowEl.appendChild(spanBar);
       }
-
-      const grip = document.createElement('div');
-      grip.className = 'cel-span-grip';
-      spanBar.appendChild(grip);
-
-      celTrackRow.appendChild(spanBar);
     }
 
     updateLoopRangeUI();
@@ -4846,9 +9775,6 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   function updatePlayheadUI(): void {
     const rCells = rulerRow.children;
-    const mCells = mouthTrackRow.children;
-    const vCells = vectorTrackRow.children;
-    const cCells = celTrackRow.children;
     const kCells = camTrackRow.children;
     const effectiveColsPerScreen = state.totalFrames / state.timelineZoom;
     const labelStep = effectiveColsPerScreen > 48 ? 5 : effectiveColsPerScreen > 30 ? 2 : 1;
@@ -4860,21 +9786,31 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         rCell.classList.toggle('active', isCurr);
         rCell.textContent = f === 0 || (f + 1) % labelStep === 0 || isCurr ? String(f + 1) : '';
       }
-      const mCell = mCells[f] as HTMLElement | undefined;
-      if (mCell && mCell.classList.contains('frame-cell')) {
-        mCell.classList.toggle('current-col', isCurr);
+      for (const dom of mouthTrackDomMap.values()) {
+        const mCell = dom.rowEl.children[f] as HTMLElement | undefined;
+        if (mCell && mCell.classList.contains('frame-cell')) {
+          mCell.classList.toggle('current-col', isCurr);
+        }
       }
-      const vCell = vCells[f] as HTMLElement | undefined;
-      if (vCell && vCell.classList.contains('frame-cell')) {
-        vCell.classList.toggle('current-col', isCurr);
+      for (const dom of vectorTrackDomMap.values()) {
+        const vCell = dom.rowEl.children[f] as HTMLElement | undefined;
+        if (vCell && vCell.classList.contains('frame-cell')) {
+          vCell.classList.toggle('current-col', isCurr);
+        }
       }
-      const cCell = cCells[f] as HTMLElement | undefined;
-      if (cCell && cCell.classList.contains('frame-cell')) {
-        cCell.classList.toggle('current-col', isCurr);
+      for (const dom of celTrackDomMap.values()) {
+        const cCell = dom.rowEl.children[f] as HTMLElement | undefined;
+        if (cCell && cCell.classList.contains('frame-cell')) {
+          cCell.classList.toggle('current-col', isCurr);
+        }
       }
       const kCell = kCells[f] as HTMLElement | undefined;
       if (kCell) kCell.classList.toggle('current-col', isCurr);
     }
+
+    layerRowsContainer.querySelectorAll<HTMLElement>('.cel-tween-key-dot').forEach((kd) => {
+      kd.classList.toggle('current', Number(kd.dataset.absFrame) === state.currentFrame);
+    });
 
     playheadLine.style.left = `${((state.currentFrame + 0.5) / state.totalFrames) * 100}%`;
     frameIndicator.textContent = `F ${state.currentFrame + 1} / ${state.totalFrames}`;
@@ -4907,17 +9843,34 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   function updateStageBadge(): void {
     const cam = getEvaluatedCamera(state.currentFrame);
     let toolLabel = state.tool.toUpperCase();
-    if (state.tool === 'moveCam') toolLabel = 'MOVE / CAM';
-    else if (state.tool === 'nudge') toolLabel = `NUDGE (${state.nudgeRadius}px)`;
+    if (state.tool === 'moveCam') {
+      const gz = getActiveLayerGizmoInfo(activeScene(), state.currentFrame, 1);
+      if (moveCamState?.mode === 'rotateLayer' && gz) {
+        const deg = Math.round((gz.rotation * 180) / Math.PI);
+        toolLabel = `ROTATE (${deg}°)`;
+      } else if (gz && Math.abs(gz.rotation) > 0.005) {
+        const deg = Math.round((gz.rotation * 180) / Math.PI);
+        toolLabel = `MOVE / CAM (${deg}°)`;
+      } else {
+        toolLabel = 'MOVE / CAM';
+      }
+    } else if (state.tool === 'nudge') toolLabel = `NUDGE (${state.nudgeRadius}px)`;
     else if (state.tool === 'brush' || state.tool === 'eraser') toolLabel = `${toolLabel} (${state.brushSize}px)`;
 
     const viewPct = Math.round(state.viewZoom * 100);
+    const target = activeTimelineTarget();
     let layerTag = '';
-    if (state.activeLayer === 'vector') layerTag = ' | [VECTOR]';
-    else if (state.activeLayer === 'bg') layerTag = ' | [BG]';
-    else if (state.activeLayer === 'mouth') {
+    if (state.activeLayer === 'vector') {
+      const vName = state.activeVectorTrack.name.toUpperCase();
+      layerTag = state.vectorPixelPreview ? ` | [${vName} • PIXEL]` : ` | [${vName}]`;
+    } else if (state.activeLayer === 'bg') {
+      layerTag = ` | [${getLayerDisplayName(target, 'bg').toUpperCase()}]`;
+    } else if (state.activeLayer === 'mouth') {
       const m = getActiveMouthState();
-      layerTag = ` | [MOUTH ${Math.round(m.scale || 100)}%]`;
+      layerTag = ` | [${getLayerDisplayName(target, 'mouth').toUpperCase()} ${Math.round(m.scale || 100)}%]`;
+    } else {
+      const cName = getLayerDisplayName(target, 'cel');
+      layerTag = ` | [${cName.toUpperCase()}]`;
     }
 
     const camTxt = nestStack.length === 0 && cam.scale !== 100 ? ` | Cam ${Math.round(cam.scale)}%` : '';
@@ -5012,193 +9965,6 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     handleCamTimelineContextMenu(e);
   });
 
-  let stretchState: {
-    targetStart: number;
-    origTotalFrames: number;
-    origCels: Array<{ start: number; cel: Cel; duration: number }>;
-    lastTargetFrame: number;
-  } | null = null;
-
-  celTrackRow.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    setActiveLayer('cel');
-    if (state.isPlaying) togglePlay();
-    const clickFrame = frameFromClientX(e.clientX);
-    goToFrame(clickFrame);
-
-    const entry = getCelEntryAt(clickFrame);
-    if (!entry) return;
-
-    celTrackRow.setPointerCapture(e.pointerId);
-    const origCels: Array<{ start: number; cel: Cel; duration: number }> = [];
-    for (const s of getSortedCelStarts()) {
-      const c = state.cels.get(s);
-      if (c) origCels.push({ start: s, cel: c, duration: c.duration });
-    }
-
-    stretchState = {
-      targetStart: entry.start,
-      origTotalFrames: state.totalFrames,
-      origCels,
-      lastTargetFrame: clickFrame,
-    };
-  });
-
-  celTrackRow.addEventListener('pointermove', (e) => {
-    if (!stretchState) return;
-    const rect = timelineGrid.getBoundingClientRect();
-    let dragFrame = Math.floor(((e.clientX - rect.left) / rect.width) * state.totalFrames);
-    dragFrame = Math.max(stretchState.targetStart, dragFrame);
-    if (dragFrame === stretchState.lastTargetFrame) return;
-    stretchState.lastTargetFrame = dragFrame;
-
-    const { targetStart, origCels, origTotalFrames } = stretchState;
-    const newDur = Math.max(1, dragFrame - targetStart + 1);
-
-    const nextOrig = origCels.find((item) => item.start > targetStart);
-    let pushShift = 0;
-    if (nextOrig) {
-      const neededNextStart = targetStart + newDur;
-      if (neededNextStart > nextOrig.start) {
-        pushShift = neededNextStart - nextOrig.start;
-      }
-    }
-
-    state.cels.clear();
-    let maxEnd = origTotalFrames;
-    for (const item of origCels) {
-      if (item.start < targetStart) {
-        item.cel.duration = item.duration;
-        state.cels.set(item.start, item.cel);
-      } else if (item.start === targetStart) {
-        item.cel.duration = newDur;
-        state.cels.set(item.start, item.cel);
-        maxEnd = Math.max(maxEnd, item.start + newDur);
-      } else {
-        const newStart = item.start + pushShift;
-        item.cel.duration = item.duration;
-        state.cels.set(newStart, item.cel);
-        maxEnd = Math.max(maxEnd, newStart + item.duration);
-      }
-    }
-
-    state.totalFrames = Math.max(origTotalFrames, maxEnd);
-    state.currentFrame = Math.min(state.totalFrames - 1, dragFrame);
-    renderTimeline();
-    renderStage();
-  });
-
-  celTrackRow.addEventListener('pointerup', () => {
-    stretchState = null;
-  });
-  celTrackRow.addEventListener('pointercancel', () => {
-    stretchState = null;
-  });
-
-  let contextTargetFrame = 0;
-  let contextTargetLayer: 'cel' | 'vector' = 'cel';
-
-  let vectorStretchState: {
-    targetStart: number;
-    origTotalFrames: number;
-    origCels: Array<{ start: number; cel: VectorCel; duration: number }>;
-    lastTargetFrame: number;
-  } | null = null;
-
-  vectorTrackRow.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    setActiveLayer('vector');
-    if (state.isPlaying) togglePlay();
-    const clickFrame = frameFromClientX(e.clientX);
-    goToFrame(clickFrame);
-
-    const entry = getVectorCelEntryAt(clickFrame);
-    if (!entry) return;
-
-    vectorTrackRow.setPointerCapture(e.pointerId);
-    const origCels: Array<{ start: number; cel: VectorCel; duration: number }> = [];
-    for (const s of getSortedVectorCelStarts()) {
-      const c = state.vectorCels.get(s);
-      if (c) origCels.push({ start: s, cel: c, duration: c.duration });
-    }
-
-    vectorStretchState = {
-      targetStart: entry.start,
-      origTotalFrames: state.totalFrames,
-      origCels,
-      lastTargetFrame: clickFrame,
-    };
-  });
-
-  vectorTrackRow.addEventListener('pointermove', (e) => {
-    if (!vectorStretchState) return;
-    const rect = timelineGrid.getBoundingClientRect();
-    let dragFrame = Math.floor(((e.clientX - rect.left) / rect.width) * state.totalFrames);
-    dragFrame = Math.max(vectorStretchState.targetStart, dragFrame);
-    if (dragFrame === vectorStretchState.lastTargetFrame) return;
-    vectorStretchState.lastTargetFrame = dragFrame;
-
-    const { targetStart, origCels, origTotalFrames } = vectorStretchState;
-    const newDur = Math.max(1, dragFrame - targetStart + 1);
-
-    const nextOrig = origCels.find((item) => item.start > targetStart);
-    let pushShift = 0;
-    if (nextOrig) {
-      const neededNextStart = targetStart + newDur;
-      if (neededNextStart > nextOrig.start) {
-        pushShift = neededNextStart - nextOrig.start;
-      }
-    }
-
-    state.vectorCels.clear();
-    let maxEnd = origTotalFrames;
-    for (const item of origCels) {
-      if (item.start < targetStart) {
-        item.cel.duration = item.duration;
-        state.vectorCels.set(item.start, item.cel);
-      } else if (item.start === targetStart) {
-        item.cel.duration = newDur;
-        state.vectorCels.set(item.start, item.cel);
-        maxEnd = Math.max(maxEnd, item.start + newDur);
-      } else {
-        const newStart = item.start + pushShift;
-        item.cel.duration = item.duration;
-        state.vectorCels.set(newStart, item.cel);
-        maxEnd = Math.max(maxEnd, newStart + item.duration);
-      }
-    }
-
-    state.totalFrames = Math.max(origTotalFrames, maxEnd);
-    state.currentFrame = Math.min(state.totalFrames - 1, dragFrame);
-    renderTimeline();
-    renderStage();
-  });
-
-  vectorTrackRow.addEventListener('pointerup', () => {
-    vectorStretchState = null;
-  });
-  vectorTrackRow.addEventListener('pointercancel', () => {
-    vectorStretchState = null;
-  });
-
-  vectorTrackRow.addEventListener('dblclick', (e) => {
-    if (e.button !== 0) return;
-    const f = frameFromClientX(e.clientX);
-    const entry = getVectorCelEntryAt(f);
-    if (entry?.cel.nestId) {
-      openNestedAnimationAt('vector', f);
-    }
-  });
-
-  celTrackRow.addEventListener('dblclick', (e) => {
-    if (e.button !== 0) return;
-    const f = frameFromClientX(e.clientX);
-    const entry = getCelEntryAt(f);
-    if (entry?.cel.nestId) {
-      openNestedAnimationAt('cel', f);
-    }
-  });
-
   function renderNestBreadcrumbUI(): void {
     const inNest = nestStack.length > 0;
     nestBreadcrumbBar.classList.toggle('open', inNest);
@@ -5209,6 +9975,9 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     mustEl<HTMLButtonElement>('btnToggleBgTrack').disabled = inNest;
     mustEl<HTMLButtonElement>('btnToggleAudioTrack').disabled = inNest;
     mustEl<HTMLButtonElement>('btnToggleCamTrack').disabled = inNest;
+    btnAddMouthTrack.classList.toggle('hidden-nest-ui', !state.showMouthTrack || inNest);
+    btnAddBgTrack.classList.toggle('hidden-nest-ui', !state.showBgTrack || inNest);
+    btnAddAudioTrack.classList.toggle('hidden-nest-ui', !state.showAudioTrack || inNest);
 
     if (!inNest) {
       nestBreadcrumbs.innerHTML = '';
@@ -5259,13 +10028,25 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     toggleCamTrack(saved.showCamTrack);
   }
 
-  function openNestedAnimationAt(layer: 'cel' | 'vector', frame: number): void {
+  function openNestedAnimationAt(layer: 'cel' | 'vector', frame: number, trackId?: string): void {
     if (state.isPlaying) togglePlay();
     hideMenus();
     toggleCameraPanel(false);
     mouthSheetPop.classList.remove('open');
 
     const sc = activeScene();
+    const target = activeTimelineTarget();
+    if (layer === 'vector' && trackId) {
+      if (target.vectorTracks.some((t) => t.id === trackId)) {
+        target.activeVectorTrackId = trackId;
+      }
+    } else if (layer === 'cel' && trackId) {
+      if (target.celTracks.some((t) => t.id === trackId)) {
+        target.activeCelTrackId = trackId;
+      }
+    }
+    const returnCelTrackId = layer === 'cel' ? target.activeCelTrackId : undefined;
+    const returnVectorTrackId = layer === 'vector' ? target.activeVectorTrackId : undefined;
     const savedTracks =
       nestStack.length === 0
         ? {
@@ -5287,6 +10068,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         clip = sc.nestedClips.get(clipId)!;
       } else {
         clipId = 'nest_' + Math.random().toString(36).slice(2, 10);
+        const firstCelTrk = createCelTrack('Bitmap 1', false);
+        const firstVecTrk = createVectorTrack('Vector 1', false);
         clip = {
           id: clipId,
           name: `Nest ${sc.nestedClips.size + 1}`,
@@ -5294,15 +10077,19 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           totalFrames: 1,
           currentFrame: 0,
           loopRange: null,
-          cels: new Map(),
-          vectorCels: new Map(),
+          celTracks: [firstCelTrk],
+          activeCelTrackId: firstCelTrk.id,
+          vectorTracks: [firstVecTrk],
+          activeVectorTrackId: firstVecTrk.id,
+          layerOrder: [`vector:${firstVecTrk.id}`, `cel:${firstCelTrk.id}`],
+          layerParents: {},
         };
         sc.nestedClips.set(clipId, clip);
 
         if (existing) {
           const innerItems = cloneVectorItems(existing.cel.items);
           const innerHasInk = existing.cel.hasInk || innerItems.length > 0;
-          clip.vectorCels.set(0, {
+          firstVecTrk.cels.set(0, {
             items: innerItems,
             undoStack: [],
             hasInk: innerHasInk,
@@ -5316,7 +10103,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           existing.cel.nestId = clipId;
           existing.cel.nestOriginFrame = existing.start;
         } else {
-          clip.vectorCels.set(0, {
+          firstVecTrk.cels.set(0, {
             items: [],
             undoStack: [],
             hasInk: false,
@@ -5343,6 +10130,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         clip = sc.nestedClips.get(clipId)!;
       } else {
         clipId = 'nest_' + Math.random().toString(36).slice(2, 10);
+        const firstCelTrk = createCelTrack('Bitmap 1', false);
+        const firstVecTrk = createVectorTrack('Vector 1', false);
         clip = {
           id: clipId,
           name: `Nest ${sc.nestedClips.size + 1}`,
@@ -5350,15 +10139,19 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           totalFrames: 1,
           currentFrame: 0,
           loopRange: null,
-          cels: new Map(),
-          vectorCels: new Map(),
+          celTracks: [firstCelTrk],
+          activeCelTrackId: firstCelTrk.id,
+          vectorTracks: [firstVecTrk],
+          activeVectorTrackId: firstVecTrk.id,
+          layerOrder: [`vector:${firstVecTrk.id}`, `cel:${firstCelTrk.id}`],
+          layerParents: {},
         };
         sc.nestedClips.set(clipId, clip);
 
         if (existing) {
           const innerCanvas = createCelCanvas(existing.cel.canvas.width, existing.cel.canvas.height);
           innerCanvas.getContext('2d')?.drawImage(existing.cel.canvas, 0, 0);
-          clip.cels.set(0, {
+          firstCelTrk.cels.set(0, {
             canvas: innerCanvas,
             undoStack: [],
             hasInk: existing.cel.hasInk,
@@ -5372,7 +10165,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           existing.cel.nestId = clipId;
           existing.cel.nestOriginFrame = existing.start;
         } else {
-          clip.cels.set(0, {
+          firstCelTrk.cels.set(0, {
             canvas: createCelCanvas(),
             undoStack: [],
             hasInk: false,
@@ -5398,6 +10191,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       clipId,
       returnFrame: frame,
       returnLayer: layer,
+      returnCelTrackId,
+      returnVectorTrackId,
       savedTracks,
     });
 
@@ -5405,7 +10200,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     toggleBgTrack(false);
     toggleAudioTrack(false);
     toggleCamTrack(false);
-    toggleVectorTrack(layer === 'vector' || clip.vectorCels.size > 0);
+    toggleVectorTrack(layer === 'vector' || clip.vectorTracks.some((t) => t.cels.size > 0));
     selectTimelineTrack(layer);
 
     clip.currentFrame = Math.max(0, Math.min(clip.totalFrames - 1, clip.currentFrame));
@@ -5413,7 +10208,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     syncInspectorUI();
     renderTimeline();
     goToFrame(clip.currentFrame);
-    onNotify(`Opened ${clip.name} (${clip.totalFrames}f loop) — add frames to animate, then click Exit Nest.`);
+    onNotify(`Opened ${clip.name} (${clip.totalFrames}f loop) — add frames to animate, then double-click a frame or click Exit Nest.`);
   }
 
   function exitNestLevel(toDepth = nestStack.length - 1): void {
@@ -5424,15 +10219,25 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     const targetDepth = Math.max(0, toDepth);
     const removed = nestStack.splice(targetDepth);
     const popped = removed[0];
+    celAnchorCache = new WeakMap();
 
     if (nestStack.length === 0 && popped?.savedTracks) {
       restoreSavedTracks(popped.savedTracks);
     } else if (nestStack.length > 0) {
       const parentClip = activeNestedClip();
-      toggleVectorTrack(Boolean(parentClip && (parentClip.vectorCels.size > 0 || popped?.returnLayer === 'vector')));
+      toggleVectorTrack(
+        Boolean(parentClip && (parentClip.vectorTracks.some((t) => t.cels.size > 0) || popped?.returnLayer === 'vector'))
+      );
     }
 
     if (popped) {
+      const target = activeTimelineTarget();
+      if (popped.returnCelTrackId && target.celTracks.some((t) => t.id === popped.returnCelTrackId)) {
+        target.activeCelTrackId = popped.returnCelTrackId;
+      }
+      if (popped.returnVectorTrackId && target.vectorTracks.some((t) => t.id === popped.returnVectorTrackId)) {
+        target.activeVectorTrackId = popped.returnVectorTrackId;
+      }
       selectTimelineTrack(popped.returnLayer);
     }
     renderNestBreadcrumbUI();
@@ -5449,11 +10254,19 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (state.isPlaying) togglePlay();
     const rootEntry = nestStack[0];
     nestStack = [];
+    celAnchorCache = new WeakMap();
     if (rootEntry?.savedTracks) {
       restoreSavedTracks(rootEntry.savedTracks);
     }
     renderNestBreadcrumbUI();
     if (syncUI) {
+      const target = activeTimelineTarget();
+      if (rootEntry.returnCelTrackId && target.celTracks.some((t) => t.id === rootEntry.returnCelTrackId)) {
+        target.activeCelTrackId = rootEntry.returnCelTrackId;
+      }
+      if (rootEntry.returnVectorTrackId && target.vectorTracks.some((t) => t.id === rootEntry.returnVectorTrackId)) {
+        target.activeVectorTrackId = rootEntry.returnVectorTrackId;
+      }
       selectTimelineTrack(rootEntry.returnLayer);
       syncInspectorUI();
       renderTimeline();
@@ -5475,38 +10288,54 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         return;
       }
       const clipFrame = getClipLoopFrame(clip, frame, entry.cel.nestOriginFrame ?? 0);
-      const subCel = getCelEntryInScene(clip, clipFrame);
-      const subVCel = getVectorCelEntryInScene(clip, clipFrame);
-      if ((subCel && (subCel.cel.hasInk || subCel.cel.nestId)) || subVCel?.cel.nestId) {
+      const hasSubCelInk = clip.celTracks.some((cTrk) => {
+        const subCel = getCelEntryInMap(cTrk.cels, clipFrame);
+        return Boolean(subCel && (subCel.cel.hasInk || subCel.cel.nestId));
+      });
+      const hasSubVectorNest = clip.vectorTracks.some((t) => Boolean(getVectorCelEntryInMap(t.cels, clipFrame)?.cel.nestId));
+      if (hasSubCelInk || hasSubVectorNest) {
         onNotify('Cannot unnest nested bitmap or sub-nest directly into a vector frame.');
         return;
       }
       pushVectorItemsUndo(entry.cel);
-      if (subVCel) {
-        const sx = subVCel.cel.offsetX;
-        const sy = subVCel.cel.offsetY;
+      const mergedItems: VectorItem[] = [];
+      for (let ti = clip.vectorTracks.length - 1; ti >= 0; ti--) {
+        const subTrk = clip.vectorTracks[ti];
+        if (!subTrk.visible) continue;
+        const subVCel = getVectorCelEntryInMap(subTrk.cels, clipFrame);
+        if (!subVCel) continue;
+        const off = getCelOffsetAtFrame(subVCel.cel, subVCel.start, clipFrame);
+        const sx = off.offsetX;
+        const sy = off.offsetY;
+        const rot = subVCel.cel.rotation || 0;
+        const piv = rot ? getLayerPivotLocal(rootSc, 'vector', subVCel.cel) : { ox: 0, oy: 0 };
+        const c = Math.cos(rot);
+        const s = Math.sin(rot);
+        const xform = (p: Point2D) => {
+          if (!rot) {
+            p.x += sx;
+            p.y += sy;
+          } else {
+            const dx = p.x - piv.ox;
+            const dy = p.y - piv.oy;
+            p.x = sx + piv.ox + dx * c - dy * s;
+            p.y = sy + piv.oy + dx * s + dy * c;
+          }
+        };
         const cloned = cloneVectorItems(subVCel.cel.items);
         for (const item of cloned) {
           if (item.kind === 'fill') {
             for (const loop of item.contours) {
-              for (const p of loop) {
-                p.x += sx;
-                p.y += sy;
-              }
+              for (const p of loop) xform(p);
             }
           } else {
-            for (const p of item.points) {
-              p.x += sx;
-              p.y += sy;
-            }
+            for (const p of item.points) xform(p);
           }
+          mergedItems.push(item);
         }
-        entry.cel.items = cloned;
-        entry.cel.hasInk = subVCel.cel.hasInk || cloned.length > 0;
-      } else {
-        entry.cel.items = [];
-        entry.cel.hasInk = false;
       }
+      entry.cel.items = mergedItems;
+      entry.cel.hasInk = mergedItems.length > 0;
       delete entry.cel.nestId;
       delete entry.cel.nestOriginFrame;
     } else {
@@ -5532,63 +10361,12 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
   btnExitNest.onclick = () => exitNestLevel();
 
-  vectorTrackRow.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    if (state.isPlaying) togglePlay();
-    setActiveLayer('vector');
-    contextTargetLayer = 'vector';
-    contextTargetFrame = frameFromClientX(e.clientX);
-    goToFrame(contextTargetFrame);
-
-    const entry = getVectorCelEntryAt(contextTargetFrame);
-    const hasEntry = Boolean(entry);
-    const hasNest = Boolean(entry?.cel.nestId);
-    mustEl<HTMLButtonElement>('ctxDelete').disabled = !hasEntry;
-    mustEl<HTMLButtonElement>('ctxClear').disabled = !hasEntry;
-    ctxExitNest.classList.toggle('hidden-nest-ui', nestStack.length === 0);
-    ctxNest.textContent = hasNest ? 'Open Nested Animation' : hasEntry ? 'Open Nested Animation' : 'New Nested Animation';
-    ctxUnnest.classList.toggle('hidden-nest-ui', !hasNest);
-
-    celContextMenu.style.display = 'flex';
-    const menuW = 190;
-    const menuH = 220;
-    const left = Math.min(window.innerWidth - menuW - 6, e.clientX);
-    const top = Math.min(window.innerHeight - menuH - 6, e.clientY);
-    celContextMenu.style.left = `${left}px`;
-    celContextMenu.style.top = `${top}px`;
-  });
-
-  celTrackRow.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    if (state.isPlaying) togglePlay();
-    setActiveLayer('cel');
-    contextTargetLayer = 'cel';
-    contextTargetFrame = frameFromClientX(e.clientX);
-    goToFrame(contextTargetFrame);
-
-    const entry = getCelEntryAt(contextTargetFrame);
-    const hasEntry = Boolean(entry);
-    const hasNest = Boolean(entry?.cel.nestId);
-    mustEl<HTMLButtonElement>('ctxDelete').disabled = !hasEntry;
-    mustEl<HTMLButtonElement>('ctxClear').disabled = !hasEntry;
-    ctxExitNest.classList.toggle('hidden-nest-ui', nestStack.length === 0);
-    ctxNest.textContent = hasNest ? 'Open Nested Animation' : hasEntry ? 'Open Nested Animation' : 'New Nested Animation';
-    ctxUnnest.classList.toggle('hidden-nest-ui', !hasNest);
-
-    celContextMenu.style.display = 'flex';
-    const menuW = 190;
-    const menuH = 220;
-    const left = Math.min(window.innerWidth - menuW - 6, e.clientX);
-    const top = Math.min(window.innerHeight - menuH - 6, e.clientY);
-    celContextMenu.style.left = `${left}px`;
-    celContextMenu.style.top = `${top}px`;
-  });
-
   function hideMenus(): void {
     celContextMenu.style.display = 'none';
     mouthContextMenu.style.display = 'none';
     audioContextMenu.style.display = 'none';
     camContextMenu.style.display = 'none';
+    layerContextMenu.style.display = 'none';
     exportMenu.classList.remove('open');
     sizeMenu.classList.remove('open');
   }
@@ -5601,6 +10379,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       if (target && !mouthContextMenu.contains(target)) mouthContextMenu.style.display = 'none';
       if (target && !audioContextMenu.contains(target)) audioContextMenu.style.display = 'none';
       if (target && !camContextMenu.contains(target)) camContextMenu.style.display = 'none';
+      if (target && !layerContextMenu.contains(target)) layerContextMenu.style.display = 'none';
       if (target && !exportWrap.contains(target)) exportMenu.classList.remove('open');
       if (target && !sizeWrap.contains(target)) sizeMenu.classList.remove('open');
     },
@@ -5623,41 +10402,92 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     renderStage();
   }
 
+  function ensureContextCelOrVectorTrack(): void {
+    const target = activeTimelineTarget();
+    if (contextTargetLayer === 'vector' && contextTargetVectorTrackId) {
+      if (target.vectorTracks.some((t) => t.id === contextTargetVectorTrackId)) {
+        target.activeVectorTrackId = contextTargetVectorTrackId;
+      }
+    } else if (contextTargetLayer === 'cel' && contextTargetCelTrackId) {
+      if (target.celTracks.some((t) => t.id === contextTargetCelTrackId)) {
+        target.activeCelTrackId = contextTargetCelTrackId;
+      }
+    }
+  }
+
   ctxExitNest.onclick = () => {
     hideMenus();
     exitNestLevel();
   };
   ctxNest.onclick = () => {
     hideMenus();
-    openNestedAnimationAt(contextTargetLayer, contextTargetFrame);
+    ensureContextCelOrVectorTrack();
+    const tid = contextTargetLayer === 'vector' ? contextTargetVectorTrackId : contextTargetCelTrackId;
+    openNestedAnimationAt(contextTargetLayer, contextTargetFrame, tid || undefined);
   };
   ctxUnnest.onclick = () => {
     hideMenus();
+    ensureContextCelOrVectorTrack();
     unnestFrameAt(contextTargetLayer, contextTargetFrame);
+  };
+  ctxClearTween.onclick = () => {
+    hideMenus();
+    ensureContextCelOrVectorTrack();
+    if (contextTargetLayer === 'vector') {
+      const entry = getVectorCelEntryAt(contextTargetFrame);
+      if (!entry || !entry.cel.posKeys || entry.cel.posKeys.length === 0) return;
+      pushTweenUndo(entry.cel);
+      const cur = getCelOffsetAtFrame(entry.cel, entry.start, contextTargetFrame);
+      entry.cel.offsetX = Math.round(cur.offsetX);
+      entry.cel.offsetY = Math.round(cur.offsetY);
+      delete entry.cel.posKeys;
+      renderTimeline();
+      renderStage();
+      onNotify('Cleared vector motion tween.');
+      return;
+    }
+    const entry = getCelEntryAt(contextTargetFrame);
+    if (!entry || !entry.cel.posKeys || entry.cel.posKeys.length === 0) return;
+    pushTweenUndo(entry.cel);
+    const cur = getCelOffsetAtFrame(entry.cel, entry.start, contextTargetFrame);
+    entry.cel.offsetX = Math.round(cur.offsetX);
+    entry.cel.offsetY = Math.round(cur.offsetY);
+    delete entry.cel.posKeys;
+    renderTimeline();
+    renderStage();
+    onNotify('Cleared bitmap motion tween.');
   };
 
   mustEl<HTMLButtonElement>('ctxDelete').onclick = () => {
+    ensureContextCelOrVectorTrack();
     if (contextTargetLayer === 'vector') deleteVectorCelAtFrame(contextTargetFrame);
     else deleteCelAtFrame(contextTargetFrame);
     hideMenus();
   };
   mustEl<HTMLButtonElement>('ctxBlank').onclick = () => {
+    ensureContextCelOrVectorTrack();
     if (contextTargetLayer === 'vector') splitOrCreateBlankVectorAt(contextTargetFrame, false);
     else splitOrCreateBlankAt(contextTargetFrame, false);
     hideMenus();
   };
   mustEl<HTMLButtonElement>('ctxDup').onclick = () => {
+    ensureContextCelOrVectorTrack();
     if (contextTargetLayer === 'vector') splitOrCreateBlankVectorAt(contextTargetFrame, true);
     else splitOrCreateBlankAt(contextTargetFrame, true);
     hideMenus();
   };
   mustEl<HTMLButtonElement>('ctxClear').onclick = () => {
+    ensureContextCelOrVectorTrack();
     if (contextTargetLayer === 'vector') {
       const entry = getVectorCelEntryAt(contextTargetFrame);
       if (entry) {
         pushVectorItemsUndo(entry.cel);
         entry.cel.items = [];
         entry.cel.hasInk = false;
+        delete entry.cel.originX;
+        delete entry.cel.originY;
+        delete entry.cel.rotation;
+        delete entry.cel.posKeys;
         delete entry.cel.nestId;
         delete entry.cel.nestOriginFrame;
         renderTimeline();
@@ -5669,6 +10499,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         pushPixelUndo(entry.cel);
         entry.cel.canvas.getContext('2d')?.clearRect(0, 0, entry.cel.canvas.width, entry.cel.canvas.height);
         entry.cel.hasInk = false;
+        delete entry.cel.originX;
+        delete entry.cel.originY;
+        delete entry.cel.rotation;
+        delete entry.cel.posKeys;
         delete entry.cel.nestId;
         delete entry.cel.nestOriginFrame;
         renderTimeline();
@@ -5874,10 +10708,11 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       sw.type = 'button';
       sw.className = 'swatch' + (idx === activeSwatchIdx ? ' active' : '');
       sw.style.backgroundColor = col;
+      const keyHint = idx < 9 ? `[${idx + 1}] ` : idx === 9 ? '[0] ' : '';
       sw.title =
         idx === activeSwatchIdx
-          ? 'Click again to edit color (Right-click to remove)'
-          : 'Click to select color';
+          ? `${keyHint}Click again to edit color (Right-click to remove)`
+          : `${keyHint}Click to select color`;
       sw.onclick = () => {
         if (activeSwatchIdx === idx) {
           pickerTargetIdx = idx;
@@ -5943,18 +10778,67 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const vCel = e ? e.cel : null;
       if (!vCel || vCel.undoStack.length === 0) return;
       const entry = vCel.undoStack.pop()!;
-      if (entry.type === 'move') {
+      if (entry.type === 'tween') {
         vCel.offsetX = entry.offsetX;
         vCel.offsetY = entry.offsetY;
+        vCel.posKeys = clonePosKeys(entry.posKeys);
+        vCel.rotation = entry.rotation;
+        vCel.originX = entry.originX;
+        vCel.originY = entry.originY;
+      } else if (entry.type === 'move') {
+        vCel.offsetX = entry.offsetX;
+        vCel.offsetY = entry.offsetY;
+        vCel.rotation = entry.rotation;
+        vCel.originX = entry.originX;
+        vCel.originY = entry.originY;
       } else {
         vCel.items = cloneVectorItems(entry.items);
         vCel.hasInk = entry.hasInk;
         vCel.offsetX = entry.offsetX;
         vCel.offsetY = entry.offsetY;
+        vCel.posKeys = clonePosKeys(entry.posKeys);
+        vCel.rotation = entry.rotation;
+        vCel.originX = entry.originX;
+        vCel.originY = entry.originY;
       }
+      updateStageBadge();
       renderTimeline();
       renderStage();
       return;
+    }
+
+    if (state.activeLayer === 'mouth') {
+      const st = mouthUndoStacks.get(state.mouthLayer);
+      const act = st?.pop();
+      if (act) {
+        if (act.kind === 'transform') {
+          if (act.prevKey) state.mouthLayer.keys.set(act.frame, { ...act.prevKey });
+          else state.mouthLayer.keys.delete(act.frame);
+          updateMouthWidget();
+          updateStageBadge();
+          renderTimeline();
+          renderStage();
+          return;
+        }
+        const vis = state.mouthLayer.visemes[act.visemeIdx];
+        if (vis && vis.undoStack.length > 0) {
+          const entry = vis.undoStack.pop()!;
+          if (entry.type === 'pixels') {
+            if (vis.canvas.width !== entry.w || vis.canvas.height !== entry.h) {
+              vis.canvas.width = entry.w;
+              vis.canvas.height = entry.h;
+            }
+            const cctx = vis.canvas.getContext('2d');
+            if (cctx) {
+              cctx.imageSmoothingEnabled = false;
+              cctx.putImageData(entry.imgData, 0, 0);
+            }
+          }
+          updateMouthWidget();
+          renderStage();
+          return;
+        }
+      }
     }
 
     let layerObj: Cel | BgLayer | Viseme | null = null;
@@ -5969,9 +10853,20 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (!layerObj || layerObj.undoStack.length === 0) return;
 
     const entry = layerObj.undoStack.pop()!;
-    if (entry.type === 'move' && 'offsetX' in layerObj) {
+    if (entry.type === 'tween' && 'duration' in layerObj) {
       layerObj.offsetX = entry.offsetX;
       layerObj.offsetY = entry.offsetY;
+      layerObj.posKeys = clonePosKeys(entry.posKeys);
+      layerObj.rotation = entry.rotation;
+      layerObj.originX = entry.originX;
+      layerObj.originY = entry.originY;
+      renderTimeline();
+    } else if (entry.type === 'move' && 'offsetX' in layerObj) {
+      layerObj.offsetX = entry.offsetX;
+      layerObj.offsetY = entry.offsetY;
+      layerObj.rotation = entry.rotation;
+      layerObj.originX = entry.originX;
+      layerObj.originY = entry.originY;
     } else if (entry.type === 'pixels') {
       if (layerObj.canvas.width !== entry.w || layerObj.canvas.height !== entry.h) {
         layerObj.canvas.width = entry.w;
@@ -5988,6 +10883,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       }
     }
     updateMouthWidget();
+    updateStageBadge();
     renderStage();
   }
 
@@ -5999,14 +10895,22 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         existing.cel.items = [];
         existing.cel.offsetX = 0;
         existing.cel.offsetY = 0;
+        delete existing.cel.originX;
+        delete existing.cel.originY;
+        delete existing.cel.rotation;
+        delete existing.cel.posKeys;
         delete existing.cel.nestId;
         delete existing.cel.nestOriginFrame;
         if (clonePrev) {
           const prev = getPrevVectorCelBefore(frame);
           if (prev) {
+            const prevEndOff = getCelOffsetAtFrame(prev.cel, prev.start, prev.start + prev.cel.duration - 1);
             existing.cel.items = cloneVectorItems(prev.cel.items);
-            existing.cel.offsetX = prev.cel.offsetX;
-            existing.cel.offsetY = prev.cel.offsetY;
+            existing.cel.offsetX = Math.round(prevEndOff.offsetX);
+            existing.cel.offsetY = Math.round(prevEndOff.offsetY);
+            existing.cel.originX = prev.cel.originX;
+            existing.cel.originY = prev.cel.originY;
+            existing.cel.rotation = prev.cel.rotation;
             existing.cel.hasInk = prev.cel.hasInk;
             existing.cel.nestId = prev.cel.nestId;
             existing.cel.nestOriginFrame = prev.cel.nestOriginFrame;
@@ -6020,23 +10924,64 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         const oldDur = existing.cel.duration;
         const leftDur = frame - existing.start;
         const rightDur = oldDur - leftDur;
+        const splitOff = getCelOffsetAtFrame(existing.cel, existing.start, frame);
+        const origKeys = clonePosKeys(existing.cel.posKeys) || [];
         existing.cel.duration = leftDur;
+
+        if (origKeys.length > 0) {
+          const leftKeys = origKeys.filter((k) => k.relFrame < leftDur);
+          if (leftKeys.length >= 2) {
+            existing.cel.posKeys = leftKeys;
+          } else {
+            if (leftKeys[0]) {
+              existing.cel.offsetX = Math.round(leftKeys[0].offsetX);
+              existing.cel.offsetY = Math.round(leftKeys[0].offsetY);
+            }
+            delete existing.cel.posKeys;
+          }
+        }
 
         let items: VectorItem[] = [];
         let offsetX = 0;
         let offsetY = 0;
+        let originX: number | undefined;
+        let originY: number | undefined;
+        let rotation: number | undefined;
         let hasInk = false;
+        let posKeys: CelPosKey[] | undefined;
         let nestId: string | undefined;
         let nestOriginFrame: number | undefined;
         if (clonePrev) {
           items = cloneVectorItems(existing.cel.items);
-          offsetX = existing.cel.offsetX;
-          offsetY = existing.cel.offsetY;
+          offsetX = Math.round(splitOff.offsetX);
+          offsetY = Math.round(splitOff.offsetY);
+          originX = existing.cel.originX;
+          originY = existing.cel.originY;
+          rotation = existing.cel.rotation;
           hasInk = existing.cel.hasInk;
           nestId = existing.cel.nestId;
           nestOriginFrame = existing.cel.nestOriginFrame;
+          const shifted = origKeys
+            .filter((k) => k.relFrame >= leftDur)
+            .map((k) => ({ ...k, relFrame: k.relFrame - leftDur }));
+          if (shifted.length >= 2) {
+            posKeys = shifted;
+          }
         }
-        state.vectorCels.set(frame, { items, undoStack: [], hasInk, duration: rightDur, offsetX, offsetY, nestId, nestOriginFrame });
+        state.vectorCels.set(frame, {
+          items,
+          undoStack: [],
+          hasInk,
+          duration: rightDur,
+          offsetX,
+          offsetY,
+          originX,
+          originY,
+          rotation,
+          posKeys,
+          nestId,
+          nestOriginFrame,
+        });
       }
     } else {
       ensureVectorCelAt(frame, clonePrev);
@@ -6053,15 +10998,23 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         existing.cel.canvas = createCelCanvas();
         existing.cel.offsetX = 0;
         existing.cel.offsetY = 0;
+        delete existing.cel.originX;
+        delete existing.cel.originY;
+        delete existing.cel.rotation;
+        delete existing.cel.posKeys;
         delete existing.cel.nestId;
         delete existing.cel.nestOriginFrame;
         if (clonePrev) {
           const prev = getPrevCelBefore(frame);
           if (prev) {
+            const prevEndOff = getCelOffsetAtFrame(prev.cel, prev.start, prev.start + prev.cel.duration - 1);
             existing.cel.canvas = createCelCanvas(prev.cel.canvas.width, prev.cel.canvas.height);
             existing.cel.canvas.getContext('2d')?.drawImage(prev.cel.canvas, 0, 0);
-            existing.cel.offsetX = prev.cel.offsetX;
-            existing.cel.offsetY = prev.cel.offsetY;
+            existing.cel.offsetX = Math.round(prevEndOff.offsetX);
+            existing.cel.offsetY = Math.round(prevEndOff.offsetY);
+            existing.cel.originX = prev.cel.originX;
+            existing.cel.originY = prev.cel.originY;
+            existing.cel.rotation = prev.cel.rotation;
             existing.cel.hasInk = prev.cel.hasInk;
             existing.cel.nestId = prev.cel.nestId;
             existing.cel.nestOriginFrame = prev.cel.nestOriginFrame;
@@ -6075,24 +11028,65 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         const oldDur = existing.cel.duration;
         const leftDur = frame - existing.start;
         const rightDur = oldDur - leftDur;
+        const splitOff = getCelOffsetAtFrame(existing.cel, existing.start, frame);
+        const origKeys = clonePosKeys(existing.cel.posKeys) || [];
         existing.cel.duration = leftDur;
+
+        if (origKeys.length > 0) {
+          const leftKeys = origKeys.filter((k) => k.relFrame < leftDur);
+          if (leftKeys.length >= 2) {
+            existing.cel.posKeys = leftKeys;
+          } else {
+            if (leftKeys[0]) {
+              existing.cel.offsetX = Math.round(leftKeys[0].offsetX);
+              existing.cel.offsetY = Math.round(leftKeys[0].offsetY);
+            }
+            delete existing.cel.posKeys;
+          }
+        }
 
         let canvas = createCelCanvas();
         let offsetX = 0;
         let offsetY = 0;
+        let originX: number | undefined;
+        let originY: number | undefined;
+        let rotation: number | undefined;
         let hasInk = false;
+        let posKeys: CelPosKey[] | undefined;
         let nestId: string | undefined;
         let nestOriginFrame: number | undefined;
         if (clonePrev) {
           canvas = createCelCanvas(existing.cel.canvas.width, existing.cel.canvas.height);
           canvas.getContext('2d')?.drawImage(existing.cel.canvas, 0, 0);
-          offsetX = existing.cel.offsetX;
-          offsetY = existing.cel.offsetY;
+          offsetX = Math.round(splitOff.offsetX);
+          offsetY = Math.round(splitOff.offsetY);
+          originX = existing.cel.originX;
+          originY = existing.cel.originY;
+          rotation = existing.cel.rotation;
           hasInk = existing.cel.hasInk;
           nestId = existing.cel.nestId;
           nestOriginFrame = existing.cel.nestOriginFrame;
+          const shifted = origKeys
+            .filter((k) => k.relFrame >= leftDur)
+            .map((k) => ({ ...k, relFrame: k.relFrame - leftDur }));
+          if (shifted.length >= 2) {
+            posKeys = shifted;
+          }
         }
-        state.cels.set(frame, { canvas, undoStack: [], hasInk, duration: rightDur, offsetX, offsetY, nestId, nestOriginFrame });
+        state.cels.set(frame, {
+          canvas,
+          undoStack: [],
+          hasInk,
+          duration: rightDur,
+          offsetX,
+          offsetY,
+          originX,
+          originY,
+          rotation,
+          posKeys,
+          nestId,
+          nestOriginFrame,
+        });
       }
     } else {
       ensureCelAt(frame, clonePrev);
@@ -6198,6 +11192,14 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     renderStage();
   };
 
+  btnVectorPixelPreview.onclick = () => {
+    state.vectorPixelPreview = !state.vectorPixelPreview;
+    btnVectorPixelPreview.textContent = `Pixelate: ${state.vectorPixelPreview ? 'On' : 'Off'}`;
+    btnVectorPixelPreview.classList.toggle('active', state.vectorPixelPreview);
+    updateStageBadge();
+    renderStage();
+  };
+
   function toggleCamTrack(forceState?: boolean): void {
     state.showCamTrack = typeof forceState === 'boolean' ? forceState : !state.showCamTrack;
     const btn = mustEl<HTMLButtonElement>('btnToggleCamTrack');
@@ -6224,18 +11226,6 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     if (nestStack.length === 0) toggleCamTrack();
   };
 
-  mustEl<HTMLButtonElement>('btnVisVector').onclick = (e) => {
-    e.stopPropagation();
-    state.showVectorLayer = !state.showVectorLayer;
-    (e.currentTarget as HTMLButtonElement).style.opacity = state.showVectorLayer ? '1' : '0.35';
-    renderStage();
-  };
-  mustEl<HTMLButtonElement>('btnVisCel').onclick = (e) => {
-    e.stopPropagation();
-    state.showCelLayer = !state.showCelLayer;
-    (e.currentTarget as HTMLButtonElement).style.opacity = state.showCelLayer ? '1' : '0.35';
-    renderStage();
-  };
   mustEl<HTMLButtonElement>('btnVisCam').onclick = (e) => {
     e.stopPropagation();
     state.applyCamera = !state.applyCamera;
@@ -6344,30 +11334,33 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const sceneEndSec = (accFrames + sc.totalFrames) / app.fps;
       accFrames += sc.totalFrames;
 
-      if (!sc.audio || sc.audio.muted) continue;
+      for (const aTrk of sc.audioTracks) {
+        const clip = aTrk.clip;
+        if (!clip || clip.muted || aTrk.muted) continue;
 
-      const clipDur = sc.audio.trimEndSec - sc.audio.trimStartSec;
-      const clipGlobalStart = sceneStartSec + sc.audio.timelineStartSec;
-      const clipGlobalEnd = Math.min(sceneEndSec, clipGlobalStart + clipDur);
+        const clipDur = clip.trimEndSec - clip.trimStartSec;
+        const clipGlobalStart = sceneStartSec + clip.timelineStartSec;
+        const clipGlobalEnd = Math.min(sceneEndSec, clipGlobalStart + clipDur);
 
-      if (startSec >= clipGlobalEnd || clipGlobalEnd <= clipGlobalStart) continue;
+        if (startSec >= clipGlobalEnd || clipGlobalEnd <= clipGlobalStart) continue;
 
-      const src = ac.createBufferSource();
-      src.buffer = sc.audio.buffer;
-      const gain = ac.createGain();
-      gain.gain.value = typeof sc.audio.volume === 'number' ? sc.audio.volume : 1;
-      src.connect(gain);
-      gain.connect(dest);
+        const src = ac.createBufferSource();
+        src.buffer = clip.buffer;
+        const gain = ac.createGain();
+        gain.gain.value = getAudioTrackEffectiveVolume(aTrk);
+        src.connect(gain);
+        gain.connect(dest);
 
-      if (startSec >= clipGlobalStart) {
-        const intoClip = startSec - clipGlobalStart;
-        const remaining = clipGlobalEnd - startSec;
-        src.start(ac.currentTime, sc.audio.trimStartSec + intoClip, remaining);
-      } else {
-        const delay = clipGlobalStart - startSec;
-        src.start(ac.currentTime + delay, sc.audio.trimStartSec, clipGlobalEnd - clipGlobalStart);
+        if (startSec >= clipGlobalStart) {
+          const intoClip = startSec - clipGlobalStart;
+          const remaining = clipGlobalEnd - startSec;
+          src.start(ac.currentTime, clip.trimStartSec + intoClip, remaining);
+        } else {
+          const delay = clipGlobalStart - startSec;
+          src.start(ac.currentTime + delay, clip.trimStartSec, clipGlobalEnd - clipGlobalStart);
+        }
+        scheduled.push(src);
       }
-      scheduled.push(src);
     }
     return scheduled;
   }
@@ -6433,67 +11426,71 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
   let draggingSceneId: string | null = null;
 
   function duplicateSceneObj(src: Scene): Scene {
-    const copy = makeScene(src.name + ' Copy');
-    copy.totalFrames = src.totalFrames;
-    copy.loopRange = src.loopRange ? { ...src.loopRange } : null;
-    copy.cels.clear();
-    for (const [f, cel] of src.cels.entries()) {
-      const c = createCelCanvas(cel.canvas.width, cel.canvas.height);
-      c.getContext('2d')?.drawImage(cel.canvas, 0, 0);
-      copy.cels.set(f, {
-        canvas: c,
-        undoStack: [],
-        hasInk: cel.hasInk,
-        duration: cel.duration,
-        offsetX: cel.offsetX,
-        offsetY: cel.offsetY,
-        nestId: cel.nestId,
-        nestOriginFrame: cel.nestOriginFrame,
-      });
-    }
-    copy.vectorCels.clear();
-    for (const [f, vCel] of src.vectorCels.entries()) {
-      copy.vectorCels.set(f, {
-        items: cloneVectorItems(vCel.items),
-        undoStack: [],
-        hasInk: vCel.hasInk,
-        duration: vCel.duration,
-        offsetX: vCel.offsetX,
-        offsetY: vCel.offsetY,
-        nestId: vCel.nestId,
-        nestOriginFrame: vCel.nestOriginFrame,
-      });
-    }
-    copy.nestedClips = new Map();
-    for (const [cid, clip] of src.nestedClips.entries()) {
-      const cCels = new Map<number, Cel>();
-      for (const [f, cel] of clip.cels.entries()) {
+    const cloneCelCelsMap = (srcMap: Map<number, Cel>): Map<number, Cel> => {
+      const m = new Map<number, Cel>();
+      for (const [f, cel] of srcMap.entries()) {
         const c = createCelCanvas(cel.canvas.width, cel.canvas.height);
         c.getContext('2d')?.drawImage(cel.canvas, 0, 0);
-        cCels.set(f, {
+        m.set(f, {
           canvas: c,
           undoStack: [],
           hasInk: cel.hasInk,
           duration: cel.duration,
           offsetX: cel.offsetX,
           offsetY: cel.offsetY,
+          originX: cel.originX,
+          originY: cel.originY,
+          rotation: cel.rotation,
+          posKeys: clonePosKeys(cel.posKeys),
           nestId: cel.nestId,
           nestOriginFrame: cel.nestOriginFrame,
         });
       }
-      const vCels = new Map<number, VectorCel>();
-      for (const [f, vCel] of clip.vectorCels.entries()) {
-        vCels.set(f, {
+      return m;
+    };
+
+    const cloneVecCelsMap = (srcMap: Map<number, VectorCel>): Map<number, VectorCel> => {
+      const m = new Map<number, VectorCel>();
+      for (const [f, vCel] of srcMap.entries()) {
+        m.set(f, {
           items: cloneVectorItems(vCel.items),
           undoStack: [],
           hasInk: vCel.hasInk,
           duration: vCel.duration,
           offsetX: vCel.offsetX,
           offsetY: vCel.offsetY,
+          originX: vCel.originX,
+          originY: vCel.originY,
+          rotation: vCel.rotation,
+          posKeys: clonePosKeys(vCel.posKeys),
           nestId: vCel.nestId,
           nestOriginFrame: vCel.nestOriginFrame,
         });
       }
+      return m;
+    };
+
+    const copy = makeScene(src.name + ' Copy');
+    copy.totalFrames = src.totalFrames;
+    copy.loopRange = src.loopRange ? { ...src.loopRange } : null;
+    copy.celTracks = src.celTracks.map((trk) => ({
+      id: trk.id,
+      name: trk.name,
+      visible: trk.visible,
+      cels: cloneCelCelsMap(trk.cels),
+    }));
+    copy.activeCelTrackId = src.activeCelTrackId;
+    copy.vectorTracks = src.vectorTracks.map((trk) => ({
+      id: trk.id,
+      name: trk.name,
+      visible: trk.visible,
+      cels: cloneVecCelsMap(trk.cels),
+    }));
+    copy.activeVectorTrackId = src.activeVectorTrackId;
+    copy.layerOrder = [...src.layerOrder];
+    copy.layerParents = { ...src.layerParents };
+    copy.nestedClips = new Map();
+    for (const [cid, clip] of src.nestedClips.entries()) {
       copy.nestedClips.set(cid, {
         id: clip.id,
         name: clip.name,
@@ -6501,32 +11498,64 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         totalFrames: clip.totalFrames,
         currentFrame: clip.currentFrame,
         loopRange: clip.loopRange ? { ...clip.loopRange } : null,
-        cels: cCels,
-        vectorCels: vCels,
+        celTracks: clip.celTracks.map((trk) => ({
+          id: trk.id,
+          name: trk.name,
+          visible: trk.visible,
+          cels: cloneCelCelsMap(trk.cels),
+        })),
+        activeCelTrackId: clip.activeCelTrackId,
+        vectorTracks: clip.vectorTracks.map((trk) => ({
+          id: trk.id,
+          name: trk.name,
+          visible: trk.visible,
+          cels: cloneVecCelsMap(trk.cels),
+        })),
+        activeVectorTrackId: clip.activeVectorTrackId,
+        layerOrder: [...clip.layerOrder],
+        layerParents: { ...clip.layerParents },
       });
     }
-    const bgC = createCelCanvas(src.bgLayer.canvas.width, src.bgLayer.canvas.height);
-    bgC.getContext('2d')?.drawImage(src.bgLayer.canvas, 0, 0);
-    copy.bgLayer = {
-      canvas: bgC,
-      undoStack: [],
-      hasInk: src.bgLayer.hasInk,
-      visible: src.bgLayer.visible,
-      name: src.bgLayer.name,
-      offsetX: src.bgLayer.offsetX,
-      offsetY: src.bgLayer.offsetY,
-    };
-    copy.mouthLayer = {
-      visible: src.mouthLayer.visible,
-      keys: new Map(Array.from(src.mouthLayer.keys.entries()).map(([k, v]) => [k, { ...v }])),
-      visemes: src.mouthLayer.visemes.map((v) => {
+    copy.bgLayers = src.bgLayers.map((bg) => {
+      const bgC = createCelCanvas(bg.canvas.width, bg.canvas.height);
+      bgC.getContext('2d')?.drawImage(bg.canvas, 0, 0);
+      return {
+        id: bg.id,
+        trackName: bg.trackName,
+        canvas: bgC,
+        undoStack: [],
+        hasInk: bg.hasInk,
+        visible: bg.visible,
+        name: bg.name,
+        offsetX: bg.offsetX,
+        offsetY: bg.offsetY,
+        originX: bg.originX,
+        originY: bg.originY,
+        rotation: bg.rotation,
+      };
+    });
+    copy.activeBgLayerId = src.activeBgLayerId;
+    copy.mouthLayers = src.mouthLayers.map((m) => ({
+      id: m.id,
+      name: m.name,
+      visible: m.visible,
+      keys: new Map(Array.from(m.keys.entries()).map(([k, v]) => [k, { ...v }])),
+      visemes: m.visemes.map((v) => {
         const vc = createCelCanvas(MOUTH_W, MOUTH_H);
         vc.getContext('2d')?.drawImage(v.canvas, 0, 0);
         return { name: v.name, canvas: vc, undoStack: [] };
       }),
-    };
+    }));
+    copy.activeMouthLayerId = src.activeMouthLayerId;
     copy.cameraKeys = new Map(Array.from(src.cameraKeys.entries()).map(([k, v]) => [k, { ...v }]));
-    copy.audio = src.audio ? { ...src.audio } : null;
+    copy.audioTracks = src.audioTracks.map((aTrk) => ({
+      id: aTrk.id,
+      name: aTrk.name,
+      volume: aTrk.volume,
+      muted: aTrk.muted,
+      clip: aTrk.clip ? { ...aTrk.clip } : null,
+    }));
+    copy.activeAudioTrackId = src.activeAudioTrackId;
     return copy;
   }
 
@@ -6578,7 +11607,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       const info = document.createElement('span');
       info.className = 'scene-info-txt';
       const secStr = (sc.totalFrames / app.fps).toFixed(1);
-      info.textContent = `${sc.totalFrames}f (${secStr}s)` + (sc.audio ? ' • 🔊' : '');
+      info.textContent = `${sc.totalFrames}f (${secStr}s)` + (sc.audioTracks.some((t) => Boolean(t.clip)) ? ' • 🔊' : '');
       actRow.appendChild(info);
 
       const btns = document.createElement('div');
@@ -6719,6 +11748,7 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
           mouthContextMenu.style.display === 'flex' ||
           audioContextMenu.style.display === 'flex' ||
           camContextMenu.style.display === 'flex' ||
+          layerContextMenu.style.display === 'flex' ||
           exportMenu.classList.contains('open') ||
           sizeMenu.classList.contains('open') ||
           camPopover.classList.contains('open') ||
@@ -6767,6 +11797,8 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         selectTool('eraser');
       } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'f') {
         selectTool('fill');
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.toLowerCase() === 'm' || e.key.toLowerCase() === 'r')) {
+        selectTool('moveCam');
       } else if (
         !e.ctrlKey &&
         !e.metaKey &&
@@ -6775,6 +11807,20 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         (state.activeLayer === 'vector' || state.activeLayer === 'cel')
       ) {
         selectTool('nudge');
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'w') {
+        e.preventDefault();
+        goToFrame(0);
+        if (state.isPlaying) scheduleAudioAtFrame(0);
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey && ((e.key >= '1' && e.key <= '9') || e.key === '0')) {
+        const swIdx = e.key === '0' ? 9 : Number(e.key) - 1;
+        if (swIdx < paletteColors.length) {
+          e.preventDefault();
+          activeSwatchIdx = swIdx;
+          state.brushColor = paletteColors[swIdx];
+          brushColor.value = state.brushColor;
+          renderPalette();
+          renderStage();
+        }
       } else if (e.key === '[' || e.code === 'BracketLeft') {
         e.preventDefault();
         setBrushSize((state.tool === 'nudge' ? state.nudgeRadius - 6 : state.brushSize - 1));
@@ -6801,6 +11847,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     hasInk?: boolean;
     offsetX?: number;
     offsetY?: number;
+    originX?: number;
+    originY?: number;
+    rotation?: number;
+    posKeys?: CelPosKey[];
     nestId?: string;
     nestOriginFrame?: number;
     width?: number;
@@ -6814,9 +11864,51 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     hasInk?: boolean;
     offsetX?: number;
     offsetY?: number;
+    originX?: number;
+    originY?: number;
+    rotation?: number;
+    posKeys?: CelPosKey[];
     nestId?: string;
     nestOriginFrame?: number;
     items: VectorItem[];
+  }
+
+  interface SerializedVectorTrack {
+    id: string;
+    name: string;
+    visible?: boolean;
+    cels: SerializedVectorCel[];
+  }
+
+  interface SerializedCelTrack {
+    id: string;
+    name: string;
+    visible?: boolean;
+    cels: SerializedCel[];
+  }
+
+  interface SerializedBgLayer {
+    id?: string;
+    trackName?: string;
+    hasInk?: boolean;
+    visible?: boolean;
+    name?: string;
+    offsetX?: number;
+    offsetY?: number;
+    originX?: number;
+    originY?: number;
+    rotation?: number;
+    width?: number;
+    height?: number;
+    dataUrl: string | null;
+  }
+
+  interface SerializedMouthLayer {
+    id?: string;
+    name?: string;
+    visible?: boolean;
+    keys?: Array<[number, MouthKey]>;
+    visemes?: Array<{ name: string; dataUrl: string }>;
   }
 
   interface SerializedNestedClip {
@@ -6825,8 +11917,15 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     sourceLayer?: 'cel' | 'vector';
     totalFrames?: number;
     loopRange?: LoopRange | null;
+    celTracks?: SerializedCelTrack[];
+    activeCelTrackId?: string;
     cels?: SerializedCel[];
+    vectorTracks?: SerializedVectorTrack[];
+    activeVectorTrackId?: string;
     vectorCels?: SerializedVectorCel[];
+    layerOrder?: string[];
+    layerParents?: Record<string, string | null>;
+    celName?: string;
   }
 
   interface SerializedScene {
@@ -6834,25 +11933,23 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     name?: string;
     totalFrames?: number;
     loopRange?: LoopRange | null;
+    celTracks?: SerializedCelTrack[];
+    activeCelTrackId?: string;
     cels?: SerializedCel[];
+    vectorTracks?: SerializedVectorTrack[];
+    activeVectorTrackId?: string;
     vectorCels?: SerializedVectorCel[];
+    bgLayers?: SerializedBgLayer[];
+    activeBgLayerId?: string;
+    mouthLayers?: SerializedMouthLayer[];
+    activeMouthLayerId?: string;
+    layerOrder?: string[];
+    layerParents?: Record<string, string | null>;
+    layerNames?: { cel: string; bg: string; mouth: string };
     nestedClips?: SerializedNestedClip[];
     cameraKeys?: Array<[number, CameraKey]>;
-    bgLayer?: {
-      hasInk?: boolean;
-      visible?: boolean;
-      name?: string;
-      offsetX?: number;
-      offsetY?: number;
-      width?: number;
-      height?: number;
-      dataUrl: string | null;
-    };
-    mouthLayer?: {
-      visible?: boolean;
-      keys?: Array<[number, MouthKey]>;
-      visemes?: Array<{ name: string; dataUrl: string }>;
-    };
+    bgLayer?: SerializedBgLayer;
+    mouthLayer?: SerializedMouthLayer;
   }
 
   function serializeCelMap(celsMap: Map<number, Cel>): SerializedCel[] {
@@ -6864,6 +11961,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         hasInk: cel.hasInk,
         offsetX: cel.offsetX,
         offsetY: cel.offsetY,
+        originX: cel.originX,
+        originY: cel.originY,
+        rotation: cel.rotation,
+        posKeys: clonePosKeys(cel.posKeys),
         nestId: cel.nestId,
         nestOriginFrame: cel.nestOriginFrame,
         width: cel.canvas.width,
@@ -6872,6 +11973,15 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       });
     }
     return arr;
+  }
+
+  function serializeCelTracks(tracks: CelTrack[]): SerializedCelTrack[] {
+    return tracks.map((trk) => ({
+      id: trk.id,
+      name: trk.name,
+      visible: trk.visible,
+      cels: serializeCelMap(trk.cels),
+    }));
   }
 
   function serializeVectorCelMap(vCelsMap: Map<number, VectorCel>): SerializedVectorCel[] {
@@ -6883,12 +11993,25 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         hasInk: vCel.hasInk,
         offsetX: vCel.offsetX,
         offsetY: vCel.offsetY,
+        originX: vCel.originX,
+        originY: vCel.originY,
+        rotation: vCel.rotation,
+        posKeys: clonePosKeys(vCel.posKeys),
         nestId: vCel.nestId,
         nestOriginFrame: vCel.nestOriginFrame,
         items: cloneVectorItems(vCel.items),
       });
     }
     return arr;
+  }
+
+  function serializeVectorTracks(tracks: VectorTrack[]): SerializedVectorTrack[] {
+    return tracks.map((trk) => ({
+      id: trk.id,
+      name: trk.name,
+      visible: trk.visible,
+      cels: serializeVectorCelMap(trk.cels),
+    }));
   }
 
   async function deserializeCelMapInto(targetMap: Map<number, Cel>, rawCels: SerializedCel[] | undefined): Promise<void> {
@@ -6901,6 +12024,10 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         duration: item.duration || 1,
         offsetX: item.offsetX || 0,
         offsetY: item.offsetY || 0,
+        originX: item.originX,
+        originY: item.originY,
+        rotation: item.rotation,
+        posKeys: clonePosKeys(item.posKeys),
         nestId: item.nestId,
         nestOriginFrame: item.nestOriginFrame,
       };
@@ -6920,6 +12047,34 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
     }
   }
 
+  async function deserializeCelTracks(
+    rawTracks: SerializedCelTrack[] | undefined,
+    legacyCels: SerializedCel[] | undefined,
+    legacyName?: string
+  ): Promise<CelTrack[]> {
+    if (Array.isArray(rawTracks) && rawTracks.length > 0) {
+      const out: CelTrack[] = [];
+      for (let idx = 0; idx < rawTracks.length; idx++) {
+        const rt = rawTracks[idx];
+        const cels = new Map<number, Cel>();
+        await deserializeCelMapInto(cels, rt.cels);
+        out.push({
+          id: rt.id || 'ctrk_' + Math.random().toString(36).slice(2, 10),
+          name: rt.name || `Bitmap ${idx + 1}`,
+          visible: rt.visible !== false,
+          cels,
+        });
+      }
+      return out;
+    }
+    const trk = createCelTrack(legacyName || 'Bitmap 1', true);
+    if (Array.isArray(legacyCels) && legacyCels.length > 0) {
+      trk.cels.clear();
+      await deserializeCelMapInto(trk.cels, legacyCels);
+    }
+    return [trk];
+  }
+
   function deserializeVectorCelMapInto(
     targetMap: Map<number, VectorCel>,
     rawVCels: SerializedVectorCel[] | undefined
@@ -6932,10 +12087,38 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         duration: vItem.duration || 1,
         offsetX: vItem.offsetX || 0,
         offsetY: vItem.offsetY || 0,
+        originX: vItem.originX,
+        originY: vItem.originY,
+        rotation: vItem.rotation,
+        posKeys: clonePosKeys(vItem.posKeys),
         nestId: vItem.nestId,
         nestOriginFrame: vItem.nestOriginFrame,
       });
     }
+  }
+
+  function deserializeVectorTracks(
+    rawTracks: SerializedVectorTrack[] | undefined,
+    legacyVCels: SerializedVectorCel[] | undefined
+  ): VectorTrack[] {
+    if (Array.isArray(rawTracks) && rawTracks.length > 0) {
+      return rawTracks.map((rt, idx) => {
+        const cels = new Map<number, VectorCel>();
+        deserializeVectorCelMapInto(cels, rt.cels);
+        return {
+          id: rt.id || 'vtrk_' + Math.random().toString(36).slice(2, 10),
+          name: rt.name || `Vector ${idx + 1}`,
+          visible: rt.visible !== false,
+          cels,
+        };
+      });
+    }
+    const trk = createVectorTrack('Vector 1', true);
+    if (Array.isArray(legacyVCels) && legacyVCels.length > 0) {
+      trk.cels.clear();
+      deserializeVectorCelMapInto(trk.cels, legacyVCels);
+    }
+    return [trk];
   }
 
   function serializeScene(sc: Scene): SerializedScene {
@@ -6947,8 +12130,12 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         sourceLayer: clip.sourceLayer,
         totalFrames: clip.totalFrames,
         loopRange: clip.loopRange,
-        cels: serializeCelMap(clip.cels),
-        vectorCels: serializeVectorCelMap(clip.vectorCels),
+        celTracks: serializeCelTracks(clip.celTracks),
+        activeCelTrackId: clip.activeCelTrackId,
+        vectorTracks: serializeVectorTracks(clip.vectorTracks),
+        activeVectorTrackId: clip.activeVectorTrackId,
+        layerOrder: [...clip.layerOrder],
+        layerParents: { ...clip.layerParents },
       });
     }
     return {
@@ -6956,75 +12143,61 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
       name: sc.name,
       totalFrames: sc.totalFrames,
       loopRange: sc.loopRange,
-      cels: serializeCelMap(sc.cels),
-      vectorCels: serializeVectorCelMap(sc.vectorCels),
-      nestedClips: nestedClipsArr,
-      cameraKeys: Array.from(sc.cameraKeys.entries()),
-      bgLayer: {
-        hasInk: sc.bgLayer.hasInk,
-        visible: sc.bgLayer.visible,
-        name: sc.bgLayer.name,
-        offsetX: sc.bgLayer.offsetX,
-        offsetY: sc.bgLayer.offsetY,
-        width: sc.bgLayer.canvas.width,
-        height: sc.bgLayer.canvas.height,
-        dataUrl: sc.bgLayer.hasInk ? sc.bgLayer.canvas.toDataURL('image/png') : null,
-      },
-      mouthLayer: {
-        visible: sc.mouthLayer.visible,
-        keys: Array.from(sc.mouthLayer.keys.entries()),
-        visemes: sc.mouthLayer.visemes.map((v) => ({
+      celTracks: serializeCelTracks(sc.celTracks),
+      activeCelTrackId: sc.activeCelTrackId,
+      vectorTracks: serializeVectorTracks(sc.vectorTracks),
+      activeVectorTrackId: sc.activeVectorTrackId,
+      bgLayers: sc.bgLayers.map((bg) => ({
+        id: bg.id,
+        trackName: bg.trackName,
+        hasInk: bg.hasInk,
+        visible: bg.visible,
+        name: bg.name,
+        offsetX: bg.offsetX,
+        offsetY: bg.offsetY,
+        originX: bg.originX,
+        originY: bg.originY,
+        rotation: bg.rotation,
+        width: bg.canvas.width,
+        height: bg.canvas.height,
+        dataUrl: bg.hasInk ? bg.canvas.toDataURL('image/png') : null,
+      })),
+      activeBgLayerId: sc.activeBgLayerId,
+      mouthLayers: sc.mouthLayers.map((m) => ({
+        id: m.id,
+        name: m.name,
+        visible: m.visible,
+        keys: Array.from(m.keys.entries()),
+        visemes: m.visemes.map((v) => ({
           name: v.name,
           dataUrl: v.canvas.toDataURL('image/png'),
         })),
-      },
+      })),
+      activeMouthLayerId: sc.activeMouthLayerId,
+      layerOrder: [...sc.layerOrder],
+      layerParents: { ...sc.layerParents },
+      nestedClips: nestedClipsArr,
+      cameraKeys: Array.from(sc.cameraKeys.entries()),
     };
   }
 
-  async function deserializeScene(raw: SerializedScene, fallbackName: string): Promise<Scene> {
-    const sc = makeScene(raw.name || fallbackName);
-    if (raw.id) sc.id = raw.id;
-    sc.totalFrames = raw.totalFrames || 24;
-    sc.loopRange = raw.loopRange || null;
-    sc.cels.clear();
-    sc.nestedClips.clear();
-    sc.cameraKeys = new Map(raw.cameraKeys || []);
-
-    if (Array.isArray(raw.vectorCels) && raw.vectorCels.length > 0) {
-      sc.vectorCels.clear();
-      deserializeVectorCelMapInto(sc.vectorCels, raw.vectorCels);
-    }
-
-    await deserializeCelMapInto(sc.cels, raw.cels);
-
-    for (const rawClip of raw.nestedClips || []) {
-      const clip: NestedClip = {
-        id: rawClip.id,
-        name: rawClip.name || 'Nest',
-        sourceLayer: rawClip.sourceLayer === 'vector' ? 'vector' : 'cel',
-        totalFrames: Math.max(1, rawClip.totalFrames || 1),
-        currentFrame: 0,
-        loopRange: rawClip.loopRange || null,
-        cels: new Map(),
-        vectorCels: new Map(),
-      };
-      await deserializeCelMapInto(clip.cels, rawClip.cels);
-      deserializeVectorCelMapInto(clip.vectorCels, rawClip.vectorCels);
-      sc.nestedClips.set(clip.id, clip);
-    }
-
-    if (raw.bgLayer && raw.bgLayer.dataUrl) {
-      sc.bgLayer.hasInk = Boolean(raw.bgLayer.hasInk);
-      sc.bgLayer.visible = Boolean(raw.bgLayer.visible);
-      sc.bgLayer.name = raw.bgLayer.name || '';
-      sc.bgLayer.offsetX = raw.bgLayer.offsetX || 0;
-      sc.bgLayer.offsetY = raw.bgLayer.offsetY || 0;
-      sc.bgLayer.canvas = createCelCanvas(raw.bgLayer.width || WORLD_W, raw.bgLayer.height || WORLD_H);
-      const dataUrl = raw.bgLayer.dataUrl;
+  async function deserializeBgLayerEntry(rawBg: SerializedBgLayer, fallbackName: string): Promise<BgLayer> {
+    const bg = createBgLayer(rawBg.trackName || fallbackName, Boolean(rawBg.visible));
+    if (rawBg.id) bg.id = rawBg.id;
+    bg.hasInk = Boolean(rawBg.hasInk);
+    bg.name = rawBg.name || '';
+    bg.offsetX = rawBg.offsetX || 0;
+    bg.offsetY = rawBg.offsetY || 0;
+    bg.originX = rawBg.originX;
+    bg.originY = rawBg.originY;
+    bg.rotation = rawBg.rotation;
+    bg.canvas = createCelCanvas(rawBg.width || WORLD_W, rawBg.height || WORLD_H);
+    if (rawBg.dataUrl) {
+      const dataUrl = rawBg.dataUrl;
       await new Promise<void>((resolve) => {
         const img = new Image();
         img.onload = () => {
-          const bctx = sc.bgLayer.canvas.getContext('2d');
+          const bctx = bg.canvas.getContext('2d');
           if (bctx) {
             bctx.imageSmoothingEnabled = false;
             bctx.drawImage(img, 0, 0);
@@ -7034,38 +12207,123 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
         img.src = dataUrl;
       });
     }
+    return bg;
+  }
 
-    if (raw.mouthLayer) {
-      sc.mouthLayer.visible = Boolean(raw.mouthLayer.visible);
-      sc.mouthLayer.keys = new Map(raw.mouthLayer.keys || []);
-      if (Array.isArray(raw.mouthLayer.visemes)) {
-        for (let i = 0; i < sc.mouthLayer.visemes.length && i < raw.mouthLayer.visemes.length; i++) {
-          const vData = raw.mouthLayer.visemes[i];
-          if (vData && vData.dataUrl) {
-            await new Promise<void>((resolve) => {
-              const img = new Image();
-              img.onload = () => {
-                const vctx = sc.mouthLayer.visemes[i].canvas.getContext('2d');
-                if (vctx) {
-                  vctx.imageSmoothingEnabled = false;
-                  vctx.clearRect(0, 0, MOUTH_W, MOUTH_H);
-                  vctx.drawImage(img, 0, 0);
-                }
-                resolve();
-              };
-              img.src = vData.dataUrl;
-            });
-          }
+  async function deserializeMouthLayerEntry(rawM: SerializedMouthLayer, fallbackName: string): Promise<MouthLayer> {
+    const ml = createMouthLayer(rawM.name || fallbackName, Boolean(rawM.visible));
+    if (rawM.id) ml.id = rawM.id;
+    ml.keys = new Map(rawM.keys || []);
+    if (Array.isArray(rawM.visemes)) {
+      for (let i = 0; i < ml.visemes.length && i < rawM.visemes.length; i++) {
+        const vData = rawM.visemes[i];
+        if (vData && vData.dataUrl) {
+          await new Promise<void>((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              const vctx = ml.visemes[i].canvas.getContext('2d');
+              if (vctx) {
+                vctx.imageSmoothingEnabled = false;
+                vctx.clearRect(0, 0, MOUTH_W, MOUTH_H);
+                vctx.drawImage(img, 0, 0);
+              }
+              resolve();
+            };
+            img.src = vData.dataUrl;
+          });
         }
       }
     }
+    return ml;
+  }
+
+  async function deserializeScene(raw: SerializedScene, fallbackName: string): Promise<Scene> {
+    const sc = makeScene(raw.name || fallbackName);
+    if (raw.id) sc.id = raw.id;
+    sc.totalFrames = raw.totalFrames || 24;
+    sc.loopRange = raw.loopRange || null;
+    sc.nestedClips.clear();
+    sc.cameraKeys = new Map(raw.cameraKeys || []);
+
+    sc.celTracks = await deserializeCelTracks(raw.celTracks, raw.cels, raw.layerNames?.cel);
+    sc.activeCelTrackId =
+      raw.activeCelTrackId && sc.celTracks.some((t) => t.id === raw.activeCelTrackId)
+        ? raw.activeCelTrackId
+        : sc.celTracks[0].id;
+
+    sc.vectorTracks = deserializeVectorTracks(raw.vectorTracks, raw.vectorCels);
+    sc.activeVectorTrackId =
+      raw.activeVectorTrackId && sc.vectorTracks.some((t) => t.id === raw.activeVectorTrackId)
+        ? raw.activeVectorTrackId
+        : sc.vectorTracks[0].id;
+
+    if (Array.isArray(raw.bgLayers) && raw.bgLayers.length > 0) {
+      sc.bgLayers = [];
+      for (let i = 0; i < raw.bgLayers.length; i++) {
+        sc.bgLayers.push(await deserializeBgLayerEntry(raw.bgLayers[i], `Background ${i + 1}`));
+      }
+    } else if (raw.bgLayer) {
+      sc.bgLayers = [await deserializeBgLayerEntry(raw.bgLayer, raw.layerNames?.bg || 'Background 1')];
+    }
+    sc.activeBgLayerId =
+      raw.activeBgLayerId && sc.bgLayers.some((b) => b.id === raw.activeBgLayerId)
+        ? raw.activeBgLayerId
+        : sc.bgLayers[0].id;
+
+    if (Array.isArray(raw.mouthLayers) && raw.mouthLayers.length > 0) {
+      sc.mouthLayers = [];
+      for (let i = 0; i < raw.mouthLayers.length; i++) {
+        sc.mouthLayers.push(await deserializeMouthLayerEntry(raw.mouthLayers[i], `Mouth ${i + 1}`));
+      }
+    } else if (raw.mouthLayer) {
+      sc.mouthLayers = [await deserializeMouthLayerEntry(raw.mouthLayer, raw.layerNames?.mouth || 'Mouth 1')];
+    }
+    sc.activeMouthLayerId =
+      raw.activeMouthLayerId && sc.mouthLayers.some((m) => m.id === raw.activeMouthLayerId)
+        ? raw.activeMouthLayerId
+        : sc.mouthLayers[0].id;
+
+    if (Array.isArray(raw.layerOrder)) sc.layerOrder = [...raw.layerOrder];
+    if (raw.layerParents && typeof raw.layerParents === 'object') sc.layerParents = { ...raw.layerParents };
+
+    for (const rawClip of raw.nestedClips || []) {
+      const clipCelTracks = await deserializeCelTracks(rawClip.celTracks, rawClip.cels, rawClip.celName);
+      const clipVecTracks = deserializeVectorTracks(rawClip.vectorTracks, rawClip.vectorCels);
+      const clip: NestedClip = {
+        id: rawClip.id,
+        name: rawClip.name || 'Nest',
+        sourceLayer: rawClip.sourceLayer === 'vector' ? 'vector' : 'cel',
+        totalFrames: Math.max(1, rawClip.totalFrames || 1),
+        currentFrame: 0,
+        loopRange: rawClip.loopRange || null,
+        celTracks: clipCelTracks,
+        activeCelTrackId:
+          rawClip.activeCelTrackId && clipCelTracks.some((t) => t.id === rawClip.activeCelTrackId)
+            ? rawClip.activeCelTrackId
+            : clipCelTracks[0].id,
+        vectorTracks: clipVecTracks,
+        activeVectorTrackId:
+          rawClip.activeVectorTrackId && clipVecTracks.some((t) => t.id === rawClip.activeVectorTrackId)
+            ? rawClip.activeVectorTrackId
+            : clipVecTracks[0].id,
+        layerOrder: Array.isArray(rawClip.layerOrder)
+          ? [...rawClip.layerOrder]
+          : [...clipVecTracks.map((t) => `vector:${t.id}`), ...clipCelTracks.map((t) => `cel:${t.id}`)],
+        layerParents:
+          rawClip.layerParents && typeof rawClip.layerParents === 'object' ? { ...rawClip.layerParents } : {},
+      };
+      normalizeTargetHierarchy(clip);
+      sc.nestedClips.set(clip.id, clip);
+    }
+    normalizeTargetHierarchy(sc);
+
     return sc;
   }
 
   mustEl<HTMLButtonElement>('btnSaveJson').onclick = () => {
     hideMenus();
     const payload = {
-      version: 3,
+      version: 4,
       worldW: WORLD_W,
       worldH: WORLD_H,
       fps: app.fps,
@@ -7277,35 +12535,39 @@ export function initAnimator(onNotify: (msg: string) => void): () => void {
 
       const hasAnyAudio =
         app.mode === 'scenes'
-          ? app.scenes.some((sc) => sc.audio && !sc.audio.muted)
-          : Boolean(state.audio && !state.audio.muted);
+          ? app.scenes.some((sc) => sc.audioTracks.some((t) => t.clip && !t.clip.muted && !t.muted))
+          : activeScene().audioTracks.some((t) => t.clip && !t.clip.muted && !t.muted);
 
       if (hasAnyAudio) {
         const ac = getAudioContext();
         const dest = ac.createMediaStreamDestination();
         if (app.mode === 'scenes') {
           exportAudioSources = scheduleMultiSceneAudio(0, ac, dest);
-        } else if (state.audio) {
+        } else {
           const { minF, maxF } = getPlaybackBounds();
           const startSec = minF / app.fps;
           const totalExportSec = (maxF - minF + 1) / app.fps;
-          const clipDur = state.audio.trimEndSec - state.audio.trimStartSec;
-          const clipStart = state.audio.timelineStartSec;
-          const clipEnd = clipStart + clipDur;
+          for (const aTrk of activeScene().audioTracks) {
+            const clip = aTrk.clip;
+            if (!clip || clip.muted || aTrk.muted) continue;
+            const clipDur = clip.trimEndSec - clip.trimStartSec;
+            const clipStart = clip.timelineStartSec;
+            const clipEnd = clipStart + clipDur;
 
-          if (startSec < clipEnd && startSec + totalExportSec > clipStart) {
-            const src = ac.createBufferSource();
-            src.buffer = state.audio.buffer;
-            const gain = ac.createGain();
-            gain.gain.value = getEffectiveAudioVolume();
-            src.connect(gain);
-            gain.connect(dest);
-            if (startSec >= clipStart) {
-              src.start(ac.currentTime, state.audio.trimStartSec + (startSec - clipStart), clipEnd - startSec);
-            } else {
-              src.start(ac.currentTime + (clipStart - startSec), state.audio.trimStartSec, clipDur);
+            if (startSec < clipEnd && startSec + totalExportSec > clipStart) {
+              const src = ac.createBufferSource();
+              src.buffer = clip.buffer;
+              const gain = ac.createGain();
+              gain.gain.value = getAudioTrackEffectiveVolume(aTrk);
+              src.connect(gain);
+              gain.connect(dest);
+              if (startSec >= clipStart) {
+                src.start(ac.currentTime, clip.trimStartSec + (startSec - clipStart), clipEnd - startSec);
+              } else {
+                src.start(ac.currentTime + (clipStart - startSec), clip.trimStartSec, clipDur);
+              }
+              exportAudioSources.push(src);
             }
-            exportAudioSources.push(src);
           }
         }
         tracks.push(...dest.stream.getAudioTracks());

@@ -63,6 +63,13 @@ export default function App() {
             <button id="btnOnionBefore" className="mini-btn active" title="Show 1 Frame Before">Prev</button>
             <button id="btnOnionAfter" className="mini-btn" title="Show 1 Frame After">Next</button>
           </div>
+          <button
+            id="btnVectorPixelPreview"
+            className="hidden-nest-ui"
+            title="Pixelate Vector layer to canvas resolution using nearest-neighbor preview"
+          >
+            Pixelate: Off
+          </button>
         </div>
 
         <div className="toolbar-group">
@@ -125,7 +132,7 @@ export default function App() {
                   <span>Fill</span>
                 </button>
 
-                <button className="tool-btn" data-tool="moveCam" title="Move Layer (Left-drag) / Zoom Cam (Right-drag) / Pan Cam (Shift+drag)">
+                <button className="tool-btn" data-tool="moveCam" title="Move / Rotate Layer (M / R) — Drag orange circle for pivot, drag handle to rotate (Shift snaps 15°) / Right-drag Zoom Cam">
                   <svg viewBox="0 0 24 24">
                     <path d="M5 9l-3 3 3 3" />
                     <path d="M9 5l3-3 3 3" />
@@ -218,6 +225,9 @@ export default function App() {
                 <button id="btnMouthMove" className="mini-btn flex-1 justify-center" title="Left-drag to move mouth, Right-drag to scale mouth layer">Move</button>
                 <button id="btnMouthAll" className="mini-btn" title="All Viseme Shapes">Shapes</button>
               </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-semibold text-[#f9a8d4] truncate" id="mouthLayerNameBadge">Mouth 1</span>
+              </div>
               <div className="mouth-scale-row" title="Scale only the mouth layer">
                 <label htmlFor="mouthScaleSlider">Scale</label>
                 <input type="range" id="mouthScaleSlider" min="20" max="500" defaultValue="100" />
@@ -282,10 +292,15 @@ export default function App() {
           <div className="timeline-header" id="timelineHeader" title="Drag up/down to resize timeline (double-click to reset)">
             {/* Left: Track Toggles */}
             <div className="toolbar-group">
-              <button id="btnToggleVectorTrack" title="Show/Hide Vector Layer">Vector</button>
-              <button id="btnToggleMouthTrack" title="Show/Hide Mouth Shapes Viseme Layer">Mouth</button>
-              <button id="btnToggleBgTrack" title="Show/Hide Background Layer">Background</button>
-              <button id="btnToggleAudioTrack" title="Show/Hide Audio Track">Audio</button>
+              <button id="btnAddCelTrack" title="Add Another Bitmap Layer">+ Bitmap</button>
+              <button id="btnToggleVectorTrack" title="Show/Hide Vector Layers">Vector</button>
+              <button id="btnAddVectorTrack" className="hidden-nest-ui" title="Add Another Vector Layer">+ Vector</button>
+              <button id="btnToggleMouthTrack" title="Show/Hide Mouth Shapes Viseme Layers">Mouth</button>
+              <button id="btnAddMouthTrack" className="hidden-nest-ui" title="Add Another Mouth Layer">+ Mouth</button>
+              <button id="btnToggleBgTrack" title="Show/Hide Background Layers">Background</button>
+              <button id="btnAddBgTrack" className="hidden-nest-ui" title="Add Another Background Layer">+ Bg</button>
+              <button id="btnToggleAudioTrack" title="Show/Hide Audio Tracks">Audio</button>
+              <button id="btnAddAudioTrack" className="hidden-nest-ui" title="Add Another Audio Track">+ Audio</button>
               <button id="btnToggleCamTrack" title="Show/Hide Camera Track &amp; Controls">Camera</button>
             </div>
 
@@ -334,37 +349,9 @@ export default function App() {
                 <button id="btnClearLoopRange" className="mini-btn" title="Reset Loop Range">Clear</button>
               </div>
               <div className="track-label-spacer">Scrub Frames</div>
-              <div className="track-label hidden-track" id="mouthTrackLabel">
-                <span className="track-tag" title="Click to draw/move Mouth Shapes"><i className="bg-[#f472b6]" /> Mouth</span>
-                <div className="flex gap-[3px]">
-                  <button id="btnVisMouth" className="mini-btn" title="Toggle Mouth Visibility">👁</button>
-                </div>
-              </div>
-              <div className="track-label hidden-track" id="vectorTrackLabel">
-                <span className="track-tag" title="Click to draw on Vector Layer"><i className="bg-[#38bdf8]" /> Vector</span>
-                <button id="btnVisVector" className="mini-btn" title="Toggle Vector Layer">👁</button>
-              </div>
-              <div className="track-label active-draw-layer" id="celTrackLabel">
-                <span className="track-tag" title="Click to draw on Bitmap Layer"><i className="bg-[#4ade80]" /> Bitmap</span>
-                <button id="btnVisCel" className="mini-btn" title="Toggle Bitmap Layer">👁</button>
-              </div>
-              <div className="track-label hidden-track" id="bgTrackLabel">
-                <span className="track-tag" title="Click to draw on Background Layer"><i className="bg-[#94a3b8]" /> Background</span>
-                <div className="flex gap-[3px]">
-                  <button id="btnAddBgImg" className="mini-btn" title="Load Background Image">+</button>
-                  <button id="btnVisBg" className="mini-btn" title="Toggle Background Visibility">👁</button>
-                  <button id="btnClearBg" className="mini-btn danger" title="Clear Background">✕</button>
-                </div>
-                <input type="file" id="bgFileInput" accept="image/*" className="hidden" />
-              </div>
-              <div className="track-label hidden-track" id="audioTrackLabel" title="Scroll wheel here to adjust Audio volume (100%)">
-                <div className="audio-vol-fill" id="audioVolFill" />
-                <span className="track-tag"><i className="bg-[#c084fc]" /> Audio</span>
-                <div className="flex gap-[3px] relative z-[1]">
-                  <button id="btnRecAudio" className="mini-btn" title="Record Audio from Microphone">● Rec</button>
-                  <button id="btnMuteAudio" className="mini-btn" title="Mute/Unmute Audio">🔊</button>
-                </div>
-              </div>
+              <div id="layerLabelsContainer" className="vector-track-group" />
+              <input type="file" id="bgFileInput" accept="image/*" className="hidden" />
+              <div id="audioLabelsContainer" className="vector-track-group" />
               <div className="track-label hidden-track" id="camTrackLabel">
                 <span className="track-tag"><i className="bg-[#fbbf24]" /> Camera</span>
                 <button id="btnVisCam" className="mini-btn" title="Toggle Camera Preview">👁</button>
@@ -377,22 +364,8 @@ export default function App() {
                   <div className="loop-selection-bar" id="loopSelectionBar" />
                 </div>
                 <div className="ruler-row" id="rulerRow" />
-                <div className="track-row hidden-track" id="mouthTrackRow" />
-                <div className="track-row hidden-track" id="vectorTrackRow" />
-                <div className="track-row active-track-row" id="celTrackRow" />
-                <div className="track-row hidden-track" id="bgTrackRow">
-                  <div className="bg-span-bar" id="bgSpanBar">Background Layer (Drop image here or click to draw)</div>
-                </div>
-                <div className="track-row hidden-track" id="audioTrackRow">
-                  <div className="audio-empty-hint" id="audioEmptyHint">Drag &amp; drop audio or ● Rec from mic</div>
-                  <div className="audio-rec-badge" id="audioRecBadge">● REC 0.0s</div>
-                  <canvas id="audioWaveCanvas" />
-                  <div className="audio-clip-box" id="audioClipBox">
-                    <div className="audio-trim-handle left" data-trim="left" title="Trim Start (Snaps to Frame)" />
-                    <div className="audio-clip-label" id="audioClipLabel" />
-                    <div className="audio-trim-handle right" data-trim="right" title="Trim End (Snaps to Frame)" />
-                  </div>
-                </div>
+                <div id="layerRowsContainer" className="vector-track-group" />
+                <div id="audioRowsContainer" className="vector-track-group" />
                 <div className="track-row hidden-track" id="camTrackRow" />
                 <div className="loop-highlight-overlay" id="loopHighlightOverlay" />
                 <div className="playhead-line" id="playheadLine"><div className="playhead-cap" /></div>
@@ -402,11 +375,8 @@ export default function App() {
             <div className="track-right-rail" id="trackRightRail" title="Active Layer Selection">
               <div className="track-right-loop" />
               <div className="track-right-spacer" />
-              <div className="track-right-cell hidden-track" id="mouthTrackRight" />
-              <div className="track-right-cell hidden-track" id="vectorTrackRight" />
-              <div className="track-right-cell active-track-right" id="celTrackRight" />
-              <div className="track-right-cell hidden-track" id="bgTrackRight" />
-              <div className="track-right-cell hidden-track" id="audioTrackRight" />
+              <div id="layerRightsContainer" className="vector-track-group" />
+              <div id="audioRightsContainer" className="vector-track-group" />
               <div className="track-right-cell hidden-track" id="camTrackRight" />
             </div>
           </div>
@@ -452,6 +422,7 @@ export default function App() {
         <button id="ctxExitNest" className="hidden-nest-ui ctx-nest-exit">← Exit Nested Animation</button>
         <button id="ctxNest" className="ctx-nest-open">Open Nested Animation</button>
         <button id="ctxUnnest" className="hidden-nest-ui">Unnest (Flatten Frame)</button>
+        <button id="ctxClearTween" className="hidden-nest-ui">Clear Motion Tween</button>
         <div className="ctx-divider" />
         <button id="ctxDelete" className="ctx-danger">Delete Frame</button>
         <button id="ctxBlank">+ Blank Keyframe</button>
@@ -471,13 +442,26 @@ export default function App() {
         <button id="ctxAudioAutoLipSync">Auto Lip-Sync Mouth</button>
         <button id="ctxAudioFit">Fit Timeline to Audio</button>
         <button id="ctxAudioMute">Mute / Unmute</button>
-        <button id="ctxAudioDelete" className="ctx-danger">Delete Audio</button>
+        <button id="ctxAudioDelete" className="ctx-danger">Delete Audio Clip</button>
+        <button id="ctxAudioDeleteTrack" className="ctx-danger hidden-nest-ui">Delete Audio Layer</button>
       </div>
 
       {/* Right-Click Camera Keyframe Context Menu */}
       <div className="context-menu" id="camContextMenu">
         <button id="ctxCamSet">Update Camera Keyframe</button>
         <button id="ctxCamDelete" className="ctx-danger">Delete Camera Keyframe</button>
+      </div>
+
+      {/* Right-Click Layer Label Context Menu */}
+      <div className="context-menu" id="layerContextMenu">
+        <button id="ctxLayerAddChildVec">+↳ Add Child Vector Layer</button>
+        <button id="ctxLayerAddChildCel">+↳ Add Child Bitmap Layer</button>
+        <button id="ctxLayerJoinAbove">Join as Child of Above</button>
+        <button id="ctxLayerDetach">Detach from Parent</button>
+        <div className="ctx-divider" />
+        <button id="ctxLayerRename">Rename Layer</button>
+        <button id="ctxLayerClear" className="hidden-nest-ui">Clear Background Artwork</button>
+        <button id="ctxLayerDelete" className="ctx-danger">Delete Layer</button>
       </div>
     </div>
   );
